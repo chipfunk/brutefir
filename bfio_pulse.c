@@ -61,10 +61,15 @@ dummypipe (int io)
 		close (dummypipe[1]);	// close unused write-end
 		settings->dummypipe_fd = dummypipe[0];
 	}
-	else
+	else if (io == BF_OUT)
 	{
 		close (dummypipe[0]);	// Close unused read-end
 		settings->dummypipe_fd = dummypipe[1];
+	}
+	else
+	{
+		fprintf (stderr, "Pulse I/O: Invalid IO direction.\n");
+		return -1;
 	}
 
 	return settings->dummypipe_fd;
