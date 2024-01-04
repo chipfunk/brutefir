@@ -18,8 +18,9 @@ struct settings
   bool_t initialized;
 };
 
-static pa_simple *pa_input_sink = NULL;
-static pa_simple *pa_output_source = NULL;
+static struct settings *settings;
+
+static pa_simple *pa_handle = NULL;
 
 void*
 bfio_preinit (int *version_major, int *version_minor, int
@@ -38,12 +39,8 @@ bfio_preinit (int *version_major, int *version_minor, int
       return NULL;
     }
 
-  struct settings *settings;
   union bflexval lexval;
   int n, token;
-
-  settings = malloc (sizeof(struct settings));
-  memset (settings, 0, sizeof(struct settings));
 
   if (*sample_format == BF_SAMPLE_FORMAT_AUTO)
     {
@@ -51,7 +48,14 @@ bfio_preinit (int *version_major, int *version_minor, int
       return NULL;
     }
 
+  *sample_format = BF_SAMPLE_FORMAT_S16_LE;
+
   *uses_sample_clock = 0;
+
+  settings = malloc (sizeof(struct settings));
+  memset (settings, 0, sizeof(struct settings));
+
+  settings->initialized = true;
 
   return settings;
 }
@@ -88,10 +92,10 @@ bfio_read (int fd, void *buf, int offset, int count)
 
   int errno = 0;
 
-  if (pa_input_sink == NULL)
+  if (pa_handle == NULL)
     return 0;
 
-  if ((pa_simple_read (pa_input_sink, buf, count, &errno)) < 0)
+  if ((pa_simple_read (pa_handle, buf, count, &errno)) < 0)
     {
       fprintf (stderr, "Pulse I/O module failed to read, message: %d - %s.\n",
 	       errno, pa_strerror (errno));
@@ -108,10 +112,10 @@ bfio_write (int fd, const void *buf, int offset, int count)
 
   int errno = 0;
 
-  if (pa_output_source == NULL)
+  if (pa_handle == NULL)
     return 0;
 
-  if ((pa_simple_write (pa_output_source, buf, count, &errno)) < 0)
+  if ((pa_simple_write (pa_handle, buf, count, &errno)) < 0)
     {
       fprintf (stderr, "Pulse I/O module failed to write, message: %d - %s.\n",
 	       errno, pa_strerror (errno));
@@ -137,34 +141,27 @@ bfio_start (int io)
   const pa_buffer_attr *pa_buffer_attr = NULL;
   int errno = 0;
 
+  const char *pa_stream_name = "BruteFIR";
+  pa_stream_direction_t pa_stream_direction = PA_STREAM_NODIRECTION;
+
   if (io == BF_IN)
     {
-      pa_input_sink = pa_simple_new (NULL, pa_app_name,
-      PA_STREAM_RECORD,
-				     NULL, "Input to BruteFIR", &pa_sample_spec,
-				     NULL,
-				     NULL, &errno);
-      if (pa_input_sink == NULL)
-	{
-	  fprintf (stderr,
-		   "Pulse I/O module failed to open input, message: %d - %s.\n",
-		   errno, pa_strerror (errno));
-	}
+      pa_stream_direction = PA_STREAM_RECORD;
     }
   else if (io == BF_OUT)
     {
-      pa_output_source = pa_simple_new (pa_server, pa_app_name,
-      PA_STREAM_PLAYBACK,
-					pa_device, "Output from BruteFIR",
-					&pa_sample_spec, pa_channel_map,
-					pa_buffer_attr, &errno);
-      if (pa_output_source == NULL)
-	{
-	  fprintf (
-	      stderr,
-	      "Pulse I/O module failed to open output, message: %d - %s.\n",
-	      errno, pa_strerror (errno));
-	}
+      pa_stream_direction = PA_STREAM_PLAYBACK;
+    }
+
+  pa_handle = pa_simple_new (pa_server, pa_app_name, pa_stream_direction,
+			     pa_device, pa_stream_name, &pa_sample_spec,
+			     pa_channel_map, pa_buffer_attr, &errno);
+  if (pa_handle == NULL)
+    {
+      fprintf (stderr,
+	       "Pulse I/O module failed to open input, message: %d - %s.\n",
+	       errno, pa_strerror (errno));
+      return -1;
     }
 
   return 0;
@@ -175,14 +172,8 @@ bfio_stop (int io)
 {
   fprintf (stderr, "pulse::stop, %d.\n", io);
 
-  if (io == BF_IN)
-    {
-      pa_simple_free (pa_input_sink);
-      pa_input_sink = NULL;
-    }
-  else if (io == BF_OUT)
-    {
-      pa_simple_free (pa_output_source);
-      pa_output_source = NULL;
-    }
+  pa_simple_flush(pa_handle, NULL);
+  pa_simple_free (pa_handle);
+
+  pa_handle = NULL;
 }
