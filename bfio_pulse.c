@@ -38,7 +38,7 @@ struct settings
 	// Dummy-pipe value
 	int dummypipe_fd;		// File-descriptor for dummy-pipe.
 
-// PulseAUdio values
+	// PulseAUdio values
 	char *app_name;		// The name of this application as shown in PA
 	char *server;			// Name of server to connect to, NULL for default
 	char *stream_name;	// The stream-name as shown in PA
@@ -62,7 +62,7 @@ static pa_simple *pa_handle[2];	// Keep per in/out-stream, because ... fork()/th
  * @return a file-descriptor to the pipes read OR write end. Returns -1 in case of error.
  */
 static int
-create_dummypipe (int io)
+create_dummypipe (const int io)
 {
 	int dummypipe[2];
 	if (pipe (dummypipe) == -1)
@@ -91,7 +91,7 @@ create_dummypipe (int io)
 }
 
 static int
-check_version (int *version_major, int *version_minor)
+check_version (const int *version_major, const int *version_minor)
 {
 	if (*version_major != BF_VERSION_MAJOR)
 	{
@@ -107,7 +107,7 @@ check_version (int *version_major, int *version_minor)
 }
 
 static void
-init_settings (int io, int sample_rate, int open_channels)
+init_settings (const int io, const int sample_rate, const int open_channels)
 {
 	my_params[io] = malloc (sizeof(struct settings));
 	memset (my_params[io], 0, sizeof(struct settings));
@@ -118,7 +118,7 @@ init_settings (int io, int sample_rate, int open_channels)
 }
 
 static void*
-parse_config_options (int io, int
+parse_config_options (const int io, int
 (*get_config_token) (union bflexval *lexval))
 {
 	union bflexval lexval;
@@ -174,7 +174,7 @@ parse_config_options (int io, int
  * @param bf_sample_format The sample-format requested by BruteFIR
  * @return PA sample-format to use, or PA_SAMPLE_INVALID if no sample-format could be found.
  */
-static pa_sample_format_t
+static const pa_sample_format_t
 detect_pa_sample_format (const int *bf_sample_format)
 {
 	switch (*bf_sample_format)
@@ -238,9 +238,11 @@ bfio_preinit (int *version_major, int *version_minor, int
 		return NULL;
 	}
 
-	my_params[io]->sample_format = detect_pa_sample_format(sample_format);
-	if(my_params[io]->sample_format == PA_SAMPLE_INVALID) {
-		fprintf (stderr, "Pulse I/O: Could not find appropriate sample-format for PA.\n");
+	my_params[io]->sample_format = detect_pa_sample_format (sample_format);
+	if (my_params[io]->sample_format == PA_SAMPLE_INVALID)
+	{
+		fprintf (stderr,
+							"Pulse I/O: Could not find appropriate sample-format for PA.\n");
 		return NULL;
 	}
 
@@ -277,9 +279,9 @@ bfio_init (
 static pa_simple*
 _pa_simple_open (const char *server, const char *app_name, const char *device,
 									const char *stream_name,
-									pa_stream_direction_t stream_direction,
-									pa_sample_format_t sample_format, int sample_rate,
-									int channels, const pa_channel_map *channel_map,
+									const pa_stream_direction_t stream_direction,
+									const pa_sample_format_t sample_format, const int sample_rate,
+									const int channels, const pa_channel_map *channel_map,
 									const pa_buffer_attr *buffer_attr)
 {
 	const pa_sample_spec sample_spec =
@@ -306,7 +308,7 @@ _pa_simple_open (const char *server, const char *app_name, const char *device,
  * Initializing PA-connection here to avoid fork()-ing after bfio_init().
  */
 int
-bfio_start (int io)
+bfio_start (const int io)
 {
 	pa_stream_direction_t stream_direction;
 	if (io == BF_IN)
@@ -324,16 +326,38 @@ bfio_start (int io)
 		return -1;
 	}
 
-	const pa_buffer_attr buffer_attr =
-	{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq =
-			my_params[io]->period_size, .fragsize = my_params[io]->period_size, };
-	 pa_handle[io] = _pa_simple_open (
-			my_params[io]->server, my_params[io]->app_name, my_params[io]->device,
-			my_params[io]->stream_name, stream_direction,
-			my_params[io]->sample_format, my_params[io]->sample_rate,
-			my_params[io]->open_channels,
-			NULL,
-			&buffer_attr);
+	pa_buffer_attr buffer_attr =
+	{ .maxlength = 4 * my_params[io]->period_size };
+
+	if (io == BF_IN)
+	{
+		// BF_IN is a PA recording-stream
+		buffer_attr.fragsize = my_params[io]->period_size;
+	}
+	else if (io == BF_OUT)
+	{
+		// BF_IN is a PA recording-stream
+		buffer_attr.tlength = -1;
+		buffer_attr.minreq = my_params[io]->period_size;
+		buffer_attr.prebuf = -1;
+	}
+	else
+	{
+		fprintf (stderr,
+							"Pulse I/O module could not determine stream-direction.\n");
+		return -1;
+	}
+
+	pa_handle[io] = _pa_simple_open (my_params[io]->server,
+																		my_params[io]->app_name,
+																		my_params[io]->device,
+																		my_params[io]->stream_name,
+																		stream_direction,
+																		my_params[io]->sample_format,
+																		my_params[io]->sample_rate,
+																		my_params[io]->open_channels,
+																		NULL,
+																		&buffer_attr);
 
 	if (pa_handle[io] == NULL)
 	{
@@ -344,7 +368,7 @@ bfio_start (int io)
 }
 
 void
-bfio_stop (int io)
+bfio_stop (const int io)
 {
 	close (my_params[io]->dummypipe_fd);
 	my_params[io]->dummypipe_fd = -1;
@@ -361,7 +385,7 @@ bfio_stop (int io)
 }
 
 int
-bfio_read (int fd, void *buf, int offset, int count)
+bfio_read (const int fd, void *buf, const int offset, const int count)
 {
 	if (pa_handle[BF_IN] == NULL) return 0;
 
@@ -377,7 +401,7 @@ bfio_read (int fd, void *buf, int offset, int count)
 }
 
 int
-bfio_write (int fd, const void *buf, int offset, int count)
+bfio_write (const int fd, const void *buf, const int offset, const int count)
 {
 	if (pa_handle[BF_OUT] == NULL) return 0;
 
