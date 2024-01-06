@@ -43,6 +43,7 @@ struct settings
 	char *server;			// Name of server to connect to, NULL for default
 	char *stream_name;	// The stream-name as shown in PA
 	char *device;			// Device-name to connect to, or NULL for default
+	pa_sample_format_t sample_format;
 };
 
 static struct settings *my_params[2];	// Keep per in/out-stream, because ... fork()/threading?
@@ -167,6 +168,52 @@ parse_config_options (int io, int
 	return my_params[io];
 }
 
+/**
+ * Detect appropriate sample-format for PA.
+ *
+ * @param bf_sample_format The sample-format requested by BruteFIR
+ * @return PA sample-format to use, or PA_SAMPLE_INVALID if no sample-format could be found.
+ */
+static pa_sample_format_t
+detect_pa_sample_format (const int *bf_sample_format)
+{
+	switch (*bf_sample_format)
+	{
+		case BF_SAMPLE_FORMAT_AUTO:
+#ifdef LITTLE_ENDIAN
+			return PA_SAMPLE_S32LE;
+#else if BIG_ENDIAN
+			return PA_SAMPLE_S32BE;
+#endif
+		case BF_SAMPLE_FORMAT_S8:
+			return PA_SAMPLE_U8;
+		case BF_SAMPLE_FORMAT_S16_LE:
+			return PA_SAMPLE_S16LE;
+		case BF_SAMPLE_FORMAT_S16_BE:
+			return PA_SAMPLE_S16BE;
+		case BF_SAMPLE_FORMAT_S24_LE:
+			return PA_SAMPLE_S24LE;
+		case BF_SAMPLE_FORMAT_S24_BE:
+			return PA_SAMPLE_S24BE;
+		case BF_SAMPLE_FORMAT_S24_4LE:
+			return PA_SAMPLE_S24_32LE;
+		case BF_SAMPLE_FORMAT_S24_4BE:
+			return PA_SAMPLE_S24_32BE;
+		case BF_SAMPLE_FORMAT_S32_LE:
+			return PA_SAMPLE_S32LE;
+		case BF_SAMPLE_FORMAT_S32_BE:
+			return PA_SAMPLE_S32BE;
+		case BF_SAMPLE_FORMAT_FLOAT_LE:
+			return PA_SAMPLE_FLOAT32LE;
+		case BF_SAMPLE_FORMAT_FLOAT_BE:
+			return PA_SAMPLE_FLOAT32BE;
+		default:
+			// noop
+	}
+
+	return PA_SAMPLE_INVALID;
+}
+
 void*
 bfio_preinit (int *version_major, int *version_minor, int
 (*get_config_token) (union bflexval *lexval),
@@ -191,13 +238,11 @@ bfio_preinit (int *version_major, int *version_minor, int
 		return NULL;
 	}
 
-	if (*sample_format == BF_SAMPLE_FORMAT_AUTO)
-	{
-		fprintf (stderr, "Pulse I/O: No support for AUTO sample format.\n");
+	my_params[io]->sample_format = detect_pa_sample_format(sample_format);
+	if(my_params[io]->sample_format == PA_SAMPLE_INVALID) {
+		fprintf (stderr, "Pulse I/O: Could not find appropriate sample-format for PA.\n");
 		return NULL;
 	}
-
-	*sample_format = BF_SAMPLE_FORMAT_S16_LE;
 
 	*uses_sample_clock = 0;
 
@@ -280,16 +325,15 @@ bfio_start (int io)
 	}
 
 	const pa_buffer_attr buffer_attr =
-	{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq = my_params[io]->period_size, .fragsize =
-			my_params[io]->period_size, };
-
-	pa_handle[io] = _pa_simple_open (my_params[io]->server,
-																		my_params[io]->app_name,
-																		my_params[io]->device,
-																		my_params[io]->stream_name,
-																		stream_direction, PA_SAMPLE_S16LE, 44100, 2,
-																		NULL,
-																		&buffer_attr);
+	{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq =
+			my_params[io]->period_size, .fragsize = my_params[io]->period_size, };
+	 pa_handle[io] = _pa_simple_open (
+			my_params[io]->server, my_params[io]->app_name, my_params[io]->device,
+			my_params[io]->stream_name, stream_direction,
+			my_params[io]->sample_format, my_params[io]->sample_rate,
+			my_params[io]->open_channels,
+			NULL,
+			&buffer_attr);
 
 	if (pa_handle[io] == NULL)
 	{
