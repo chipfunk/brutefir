@@ -12,13 +12,19 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <pulse/simple.h>
+#include <pulse/error.h>
+#include <pulse/pulseaudio.h>
+
 #define IS_BFIO_MODULE
 #include "bfmod.h"
 #include "bit.h"
 
-#include <pulse/simple.h>
-#include <pulse/error.h>
-#include <pulse/pulseaudio.h>
+#define GET_TOKEN(token, errstr)                                               \
+    if (get_config_token(&lexval) != token) {                                  \
+        fprintf(stderr, "Pulse I/O: Parse error: " errstr);                     \
+        return NULL;                                                           \
+    }
 
 struct settings
 {
@@ -28,6 +34,11 @@ struct settings
 	int open_channels;
 
 	int dummypipe_fd;		// File-descriptor for dummy-pipe.
+
+	char *app_name;		// The name of this application as shown in PA
+	char *server;			// Name of server to connect to, NULL for default
+	char *stream_name;	// The stream-name as shown in PA
+	char *device;			// Device-name to connect to, or NULL for default
 };
 
 static struct settings *settings;
@@ -47,7 +58,7 @@ static pa_simple *pa_handle = NULL;
  * @return a file-descriptor to the pipes read OR write end. Returns -1 in case of error.
  */
 static int
-dummypipe (int io)
+create_dummypipe (int io)
 {
 	int dummypipe[2];
 	if (pipe (dummypipe) == -1)
@@ -75,6 +86,84 @@ dummypipe (int io)
 	return settings->dummypipe_fd;
 }
 
+static int
+check_version (int *version_major, int *version_minor)
+{
+	if (*version_major != BF_VERSION_MAJOR)
+	{
+		return false;
+	}
+
+	if (*version_minor != BF_VERSION_MINOR)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+static void
+init_settings (int io, int sample_rate, int open_channels)
+{
+	settings = malloc (sizeof(struct settings));
+	memset (settings, 0, sizeof(struct settings));
+
+	settings->io = io;
+	settings->sample_rate = sample_rate;
+	settings->open_channels = open_channels;
+}
+
+static void*
+parse_config_options (int
+(*get_config_token) (union bflexval *lexval))
+{
+	union bflexval lexval;
+	int token;
+	while ((token = get_config_token (&lexval)) > 0)
+	{
+		if (token == BF_LEXVAL_FIELD)
+		{
+			if (strcmp (lexval.field, "server") == 0)
+			{
+				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+				settings->server = strdup (lexval.string);
+			}
+			else if (strcmp (lexval.field, "device") == 0)
+			{
+				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+				settings->device = strdup (lexval.string);
+			}
+			else if (strcmp (lexval.field, "app_name") == 0)
+			{
+				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+				char *value = strdup (lexval.string);
+				settings->app_name = strdup (lexval.string);
+			}
+			else if (strcmp (lexval.field, "stream_name") == 0)
+			{
+				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+				settings->stream_name = strdup (lexval.string);
+			}
+			else
+			{
+				fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
+				return NULL;
+			}
+			GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
+		}
+		else
+		{
+			fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
+			return NULL;
+		}
+	}
+
+	if(settings->app_name == NULL) settings->app_name = "BruteFIR";
+	if(settings->stream_name == NULL) settings->stream_name = "BruteFIR stream";
+
+	return settings;
+}
+
 void*
 bfio_preinit (int *version_major, int *version_minor, int
 (*get_config_token) (union bflexval *lexval),
@@ -82,17 +171,22 @@ bfio_preinit (int *version_major, int *version_minor, int
 							int *uses_sample_clock, int *callback_sched_policy,
 							struct sched_param *callback_sched_param, int _debug)
 {
-	int ver = *version_major;
-	*version_major = BF_VERSION_MAJOR;
-	*version_minor = BF_VERSION_MINOR;
-	if (ver != BF_VERSION_MAJOR)
+	if (!check_version (version_major, version_minor))
 	{
+		fprintf (
+				stderr,
+				"Pulse I/O: Mismatching version-numbers. Expected BF_VERSION_MAJOR.BF_VERSION_MINOR, got %d.%d.\n",
+				*version_major, *version_minor);
 		return NULL;
 	}
 
-// @todo parse config-params
-//  union bflexval lexval;
-//  int n, token;
+	init_settings (io, sample_rate, open_channels);
+
+	if (!parse_config_options (get_config_token))
+	{
+		fprintf (stderr, "Pulse I/O: Error parsing options.\n");
+		return NULL;
+	}
 
 	if (*sample_format == BF_SAMPLE_FORMAT_AUTO)
 	{
@@ -103,13 +197,6 @@ bfio_preinit (int *version_major, int *version_minor, int
 	*sample_format = BF_SAMPLE_FORMAT_S16_LE;
 
 	*uses_sample_clock = 0;
-
-	settings = malloc (sizeof(struct settings));
-	memset (settings, 0, sizeof(struct settings));
-
-	settings->io = io;
-	settings->sample_rate = sample_rate;
-	settings->open_channels = open_channels;
 
 	return settings;
 }
@@ -134,12 +221,14 @@ bfio_init (
 	*device_period_size = 4096;
 	*isinterleaved = true;
 
-	return dummypipe (io);
+	return create_dummypipe (io);
 }
 
 int
 bfio_start (int io)
 {
+	fprintf (stderr, "Pulse I/O start, state %s, %s, %s, %s.\n", settings->server, settings->app_name, settings->device, settings->stream_name);
+
 	const char *pa_server = NULL;
 	const char *pa_app_name = "BruteFIR";
 
