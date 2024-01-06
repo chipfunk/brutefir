@@ -18,6 +18,7 @@
 
 #define IS_BFIO_MODULE
 #include "bfmod.h"
+#include "bfconf.h"
 #include "bit.h"
 
 #define GET_TOKEN(token, errstr)                                               \
@@ -28,13 +29,16 @@
 
 struct settings
 {
+	// BruteFIR value
 	int io;
-
 	int sample_rate;
 	int open_channels;
+	int period_size;
 
+	// Dummy-pipe value
 	int dummypipe_fd;		// File-descriptor for dummy-pipe.
 
+// PulseAUdio values
 	char *app_name;		// The name of this application as shown in PA
 	char *server;			// Name of server to connect to, NULL for default
 	char *stream_name;	// The stream-name as shown in PA
@@ -217,9 +221,10 @@ bfio_init (
 		(*process_callback) (void **callback_states[2], int callback_state_count[2],
 													void **buffers[2], int frame_count, int event))
 {
-	*device_period_size = 4096;
+	*device_period_size = period_size;
 	*isinterleaved = true;
 
+	my_params[io]->period_size = period_size;
 	my_params[io] = params;
 
 	return create_dummypipe (io);
@@ -259,10 +264,6 @@ _pa_simple_open (const char *server, const char *app_name, const char *device,
 int
 bfio_start (int io)
 {
-	fprintf (stderr, "Pulse I/O start, state %s, %s, %s, %s.\n",
-						my_params[io]->server, my_params[io]->app_name,
-						my_params[io]->device, my_params[io]->stream_name);
-
 	pa_stream_direction_t stream_direction;
 	if (io == BF_IN)
 	{
@@ -279,28 +280,17 @@ bfio_start (int io)
 		return -1;
 	}
 
-	struct pa_channel_map channel_map = {
-			.channels = 2,
-			.map = {
-					PA_CHANNEL_POSITION_FRONT_LEFT,
-					PA_CHANNEL_POSITION_FRONT_RIGHT,
-			}
-	};
-
-	// @TODO get filter-length from configuration
-	int filter_length = 4096;
-
-	// Adjust latency here
 	const pa_buffer_attr buffer_attr =
-			{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq = filter_length, .fragsize =
-					filter_length, };
+	{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq = my_params[io]->period_size, .fragsize =
+			my_params[io]->period_size, };
 
 	pa_handle[io] = _pa_simple_open (my_params[io]->server,
-																	 my_params[io]->app_name,
-																	 my_params[io]->device,
-																	 my_params[io]->stream_name,
+																		my_params[io]->app_name,
+																		my_params[io]->device,
+																		my_params[io]->stream_name,
 																		stream_direction, PA_SAMPLE_S16LE, 44100, 2,
-																		&channel_map, &buffer_attr);
+																		NULL,
+																		&buffer_attr);
 
 	if (pa_handle[io] == NULL)
 	{
