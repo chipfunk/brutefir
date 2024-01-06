@@ -1,0 +1,11 @@
+*.o
+*.bfio
+*.bflogic
+bfconf_lexical.c
+brutefir
+
+# eclipse
+.project
+.cproject
+.settings
+
