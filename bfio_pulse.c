@@ -41,7 +41,7 @@ struct settings
 	char *device;			// Device-name to connect to, or NULL for default
 };
 
-static struct settings *settings;
+static struct settings *my_params[2];	// Keep configuration per in/out-stream, because fork()/threading
 
 static pa_simple *pa_handle = NULL;
 
@@ -70,12 +70,12 @@ create_dummypipe (int io)
 	if (io == BF_IN)
 	{
 		close (dummypipe[1]);	// close unused write-end
-		settings->dummypipe_fd = dummypipe[0];
+		my_params[io]->dummypipe_fd = dummypipe[0];
 	}
 	else if (io == BF_OUT)
 	{
 		close (dummypipe[0]);	// Close unused read-end
-		settings->dummypipe_fd = dummypipe[1];
+		my_params[io]->dummypipe_fd = dummypipe[1];
 	}
 	else
 	{
@@ -83,7 +83,7 @@ create_dummypipe (int io)
 		return -1;
 	}
 
-	return settings->dummypipe_fd;
+	return my_params[io]->dummypipe_fd;
 }
 
 static int
@@ -105,16 +105,16 @@ check_version (int *version_major, int *version_minor)
 static void
 init_settings (int io, int sample_rate, int open_channels)
 {
-	settings = malloc (sizeof(struct settings));
-	memset (settings, 0, sizeof(struct settings));
+	my_params[io] = malloc (sizeof(struct settings));
+	memset (my_params[io], 0, sizeof(struct settings));
 
-	settings->io = io;
-	settings->sample_rate = sample_rate;
-	settings->open_channels = open_channels;
+	my_params[io]->io = io;
+	my_params[io]->sample_rate = sample_rate;
+	my_params[io]->open_channels = open_channels;
 }
 
 static void*
-parse_config_options (int
+parse_config_options (int io, int
 (*get_config_token) (union bflexval *lexval))
 {
 	union bflexval lexval;
@@ -126,23 +126,22 @@ parse_config_options (int
 			if (strcmp (lexval.field, "server") == 0)
 			{
 				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-				settings->server = strdup (lexval.string);
+				my_params[io]->server = strdup (lexval.string);
 			}
 			else if (strcmp (lexval.field, "device") == 0)
 			{
 				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-				settings->device = strdup (lexval.string);
+				my_params[io]->device = strdup (lexval.string);
 			}
 			else if (strcmp (lexval.field, "app_name") == 0)
 			{
 				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-				char *value = strdup (lexval.string);
-				settings->app_name = strdup (lexval.string);
+				my_params[io]->app_name = strdup (lexval.string);
 			}
 			else if (strcmp (lexval.field, "stream_name") == 0)
 			{
 				GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-				settings->stream_name = strdup (lexval.string);
+				my_params[io]->stream_name = strdup (lexval.string);
 			}
 			else
 			{
@@ -158,10 +157,13 @@ parse_config_options (int
 		}
 	}
 
-	if(settings->app_name == NULL) settings->app_name = "BruteFIR";
-	if(settings->stream_name == NULL) settings->stream_name = "BruteFIR stream";
+	if (my_params[io]->app_name == NULL) my_params[io]->app_name = "BruteFIR";
+	if (my_params[io]->stream_name == NULL) my_params[io]->stream_name = "BruteFIR stream";
 
-	return settings;
+	fprintf (stderr, "Pulse I/O config, server %s, app-name %s, device %s, stream-name %s.\n", my_params[io]->server,
+					 my_params[io]->app_name, my_params[io]->device, my_params[io]->stream_name);
+
+	return my_params[io];
 }
 
 void*
@@ -182,7 +184,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 
 	init_settings (io, sample_rate, open_channels);
 
-	if (!parse_config_options (get_config_token))
+	if (!parse_config_options (io, get_config_token))
 	{
 		fprintf (stderr, "Pulse I/O: Error parsing options.\n");
 		return NULL;
@@ -198,7 +200,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 
 	*uses_sample_clock = 0;
 
-	return settings;
+	return (void*)my_params[io];
 }
 
 int
@@ -218,35 +220,42 @@ bfio_init (
 		(*process_callback) (void **callback_states[2], int callback_state_count[2],
 													void **buffers[2], int frame_count, int event))
 {
+	fprintf (stderr, "Pulse I/O pre-init, state %d.\n", params);
+
 	*device_period_size = 4096;
 	*isinterleaved = true;
+
+	my_params[io] = params;
 
 	return create_dummypipe (io);
 }
 
+/**
+ * Initializing PA-connection here to avoid fork()-ing after bfio_init().
+ *
+ */
 int
 bfio_start (int io)
 {
-	fprintf (stderr, "Pulse I/O start, state %s, %s, %s, %s.\n", settings->server, settings->app_name, settings->device, settings->stream_name);
+	fprintf (stderr, "Pulse I/O pre-init, state %d.\n", my_params[io]);
 
-	const char *pa_server = NULL;
-	const char *pa_app_name = "BruteFIR";
+	fprintf (stderr, "Pulse I/O start, state %s, %s, %s, %s.\n", my_params[io]->server,
+					 my_params[io]->app_name, my_params[io]->device, my_params[io]->stream_name);
 
-	const char *pa_device = NULL;
 	const pa_sample_spec pa_sample_spec =
 	{
 	PA_SAMPLE_S16LE, 44100, 2 };
 	const pa_channel_map *pa_channel_map = NULL;
 	const pa_buffer_attr pa_buffer_attr =
-	{ .maxlength = 65536, .tlength = 4096, .prebuf = 4096, .minreq = 0,
-			.fragsize = 4096, };
-	int errno = 0;
+			{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq = -1,
+			                       .fragsize = -1, };
 
-	const char *pa_stream_name = "BruteFIR";
 	pa_stream_direction_t pa_stream_direction = PA_STREAM_NODIRECTION;
 
+	char *pa_device = my_params[io]->device;
 	if (io == BF_IN)
 	{
+		pa_device = "BruteFIR";
 		pa_stream_direction = PA_STREAM_RECORD;
 	}
 	else if (io == BF_OUT)
@@ -255,15 +264,15 @@ bfio_start (int io)
 	}
 	else
 	{
-		fprintf (
-				stderr,
-				"Pulse I/O module could not determine stream-direction, message: %d - %s.\n",
-				errno, pa_strerror (errno));
+		fprintf (stderr,
+							"Pulse I/O module could not determine stream-direction.\n");
 		return -1;
 	}
 
-	pa_handle = pa_simple_new (pa_server, pa_app_name, pa_stream_direction,
-															pa_device, pa_stream_name, &pa_sample_spec,
+	int errno = 0;
+	pa_handle = pa_simple_new (my_params[io]->server, NULL,
+															pa_stream_direction, pa_device,
+															"my stream", &pa_sample_spec,
 															pa_channel_map, &pa_buffer_attr, &errno);
 	if (pa_handle == NULL)
 	{
@@ -279,12 +288,13 @@ bfio_start (int io)
 void
 bfio_stop (int io)
 {
-	close (settings->dummypipe_fd);
-	settings->dummypipe_fd = -1;
+	close (my_params[io]->dummypipe_fd);
+	my_params[io]->dummypipe_fd = -1;
 
 	/*
 	 * @todo: Close resources correctly, while avoiding getting segfault-ed OR
 	 * threads deadlocking.
+	 *
 	 *
 	 *   pa_simple_flush (pa_handle, NULL);
 	 *   pa_simple_free (pa_handle);
