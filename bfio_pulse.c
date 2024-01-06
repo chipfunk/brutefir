@@ -225,7 +225,6 @@ bfio_init (
 	*isinterleaved = true;
 
 	my_params[io]->period_size = period_size;
-	my_params[io] = params;
 
 	return create_dummypipe (io);
 }
