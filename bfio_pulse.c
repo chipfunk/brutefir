@@ -41,9 +41,8 @@ struct settings
 	char *device;			// Device-name to connect to, or NULL for default
 };
 
-static struct settings *my_params[2];	// Keep configuration per in/out-stream, because fork()/threading
-
-static pa_simple *pa_handle = NULL;
+static struct settings *my_params[2];	// Keep per in/out-stream, because ... fork()/threading?
+static pa_simple *pa_handle[2];	// Keep per in/out-stream, because ... fork()/threading?
 
 /**
  * Create a pipe to trap BruteFIR into thinking there is data-available.
@@ -158,10 +157,8 @@ parse_config_options (int io, int
 	}
 
 	if (my_params[io]->app_name == NULL) my_params[io]->app_name = "BruteFIR";
-	if (my_params[io]->stream_name == NULL) my_params[io]->stream_name = "BruteFIR stream";
-
-	fprintf (stderr, "Pulse I/O config, server %s, app-name %s, device %s, stream-name %s.\n", my_params[io]->server,
-					 my_params[io]->app_name, my_params[io]->device, my_params[io]->stream_name);
+	if (my_params[io]->stream_name == NULL) my_params[io]->stream_name =
+			"BruteFIR stream";
 
 	return my_params[io];
 }
@@ -200,7 +197,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 
 	*uses_sample_clock = 0;
 
-	return (void*)my_params[io];
+	return (void*) my_params[io];
 }
 
 int
@@ -220,8 +217,6 @@ bfio_init (
 		(*process_callback) (void **callback_states[2], int callback_state_count[2],
 													void **buffers[2], int frame_count, int event))
 {
-	fprintf (stderr, "Pulse I/O pre-init, state %d.\n", params);
-
 	*device_period_size = 4096;
 	*isinterleaved = true;
 
@@ -230,37 +225,52 @@ bfio_init (
 	return create_dummypipe (io);
 }
 
+static pa_simple*
+_pa_simple_open (const char *server, const char *app_name, const char *device,
+									const char *stream_name,
+									pa_stream_direction_t stream_direction,
+									pa_sample_format_t sample_format, int sample_rate,
+									int channels, const pa_channel_map *channel_map,
+									const pa_buffer_attr *buffer_attr)
+{
+	const pa_sample_spec sample_spec =
+	{ sample_format, sample_rate, channels };
+
+	int errno = 0;
+	pa_simple *handle = pa_simple_new (server, app_name, stream_direction, device,
+																			stream_name, &sample_spec, channel_map,
+																			buffer_attr, &errno);
+
+	if (handle == NULL)
+	{
+		fprintf (stderr,
+							"Pulse I/O could not open connection/stream, code %d - %s.\n",
+							errno, pa_strerror (errno));
+		return NULL;
+
+	}
+
+	return handle;
+}
+
 /**
  * Initializing PA-connection here to avoid fork()-ing after bfio_init().
- *
  */
 int
 bfio_start (int io)
 {
-	fprintf (stderr, "Pulse I/O pre-init, state %d.\n", my_params[io]);
+	fprintf (stderr, "Pulse I/O start, state %s, %s, %s, %s.\n",
+						my_params[io]->server, my_params[io]->app_name,
+						my_params[io]->device, my_params[io]->stream_name);
 
-	fprintf (stderr, "Pulse I/O start, state %s, %s, %s, %s.\n", my_params[io]->server,
-					 my_params[io]->app_name, my_params[io]->device, my_params[io]->stream_name);
-
-	const pa_sample_spec pa_sample_spec =
-	{
-	PA_SAMPLE_S16LE, 44100, 2 };
-	const pa_channel_map *pa_channel_map = NULL;
-	const pa_buffer_attr pa_buffer_attr =
-			{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq = -1,
-			                       .fragsize = -1, };
-
-	pa_stream_direction_t pa_stream_direction = PA_STREAM_NODIRECTION;
-
-	char *pa_device = my_params[io]->device;
+	pa_stream_direction_t stream_direction;
 	if (io == BF_IN)
 	{
-		pa_device = "BruteFIR";
-		pa_stream_direction = PA_STREAM_RECORD;
+		stream_direction = PA_STREAM_RECORD;
 	}
 	else if (io == BF_OUT)
 	{
-		pa_stream_direction = PA_STREAM_PLAYBACK;
+		stream_direction = PA_STREAM_PLAYBACK;
 	}
 	else
 	{
@@ -269,16 +279,31 @@ bfio_start (int io)
 		return -1;
 	}
 
-	int errno = 0;
-	pa_handle = pa_simple_new (my_params[io]->server, NULL,
-															pa_stream_direction, pa_device,
-															"my stream", &pa_sample_spec,
-															pa_channel_map, &pa_buffer_attr, &errno);
-	if (pa_handle == NULL)
+	struct pa_channel_map channel_map = {
+			.channels = 2,
+			.map = {
+					PA_CHANNEL_POSITION_FRONT_LEFT,
+					PA_CHANNEL_POSITION_FRONT_RIGHT,
+			}
+	};
+
+	// @TODO get filter-length from configuration
+	int filter_length = 4096;
+
+	// Adjust latency here
+	const pa_buffer_attr buffer_attr =
+			{ .maxlength = -1, .tlength = -1, .prebuf = -1, .minreq = filter_length, .fragsize =
+					filter_length, };
+
+	pa_handle[io] = _pa_simple_open (my_params[io]->server,
+																	 my_params[io]->app_name,
+																	 my_params[io]->device,
+																	 my_params[io]->stream_name,
+																		stream_direction, PA_SAMPLE_S16LE, 44100, 2,
+																		&channel_map, &buffer_attr);
+
+	if (pa_handle[io] == NULL)
 	{
-		fprintf (stderr,
-							"Pulse I/O module failed to open input, message: %d - %s.\n",
-							errno, pa_strerror (errno));
 		return -1;
 	}
 
@@ -296,19 +321,19 @@ bfio_stop (int io)
 	 * threads deadlocking.
 	 *
 	 *
-	 *   pa_simple_flush (pa_handle, NULL);
-	 *   pa_simple_free (pa_handle);
+	 *   pa_simple_flush (pa_handle[io], NULL);
+	 *   pa_simple_free (pa_handle[io]);
 	 */
-	pa_handle = NULL;
+	pa_handle[io] = NULL;
 }
 
 int
 bfio_read (int fd, void *buf, int offset, int count)
 {
-	if (pa_handle == NULL) return 0;
+	if (pa_handle[BF_IN] == NULL) return 0;
 
 	int errno = 0;
-	if ((pa_simple_read (pa_handle, buf, count, &errno)) < 0)
+	if ((pa_simple_read (pa_handle[BF_IN], buf, count, &errno)) < 0)
 	{
 		fprintf (stderr, "Pulse I/O module failed to read, message: %d - %s.\n",
 							errno, pa_strerror (errno));
@@ -321,10 +346,10 @@ bfio_read (int fd, void *buf, int offset, int count)
 int
 bfio_write (int fd, const void *buf, int offset, int count)
 {
-	if (pa_handle == NULL) return 0;
+	if (pa_handle[BF_OUT] == NULL) return 0;
 
 	int errno = 0;
-	if ((pa_simple_write (pa_handle, buf, count, &errno)) < 0)
+	if ((pa_simple_write (pa_handle[BF_OUT], buf, count, &errno)) < 0)
 	{
 		fprintf (stderr, "Pulse I/O module failed to write, message: %d - %s.\n",
 							errno, pa_strerror (errno));
