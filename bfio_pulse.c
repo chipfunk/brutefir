@@ -24,7 +24,7 @@
 #define GET_TOKEN(token, errstr)                                               \
     if (get_config_token(&lexval) != token) {                                  \
         fprintf(stderr, "Pulse I/O: Parse error: " errstr);                     \
-        return NULL;                                                           \
+        return -1;                                                           \
     }
 
 struct settings
@@ -117,7 +117,12 @@ init_settings (const int io, const int sample_rate, const int open_channels)
 	my_params[io]->open_channels = open_channels;
 }
 
-static void*
+/**
+ * Read settings from config-file.
+ *
+ * Returns 0 on success, negative values on failure.
+ */
+static int
 parse_config_options (const int io, int
 (*get_config_token) (union bflexval *lexval))
 {
@@ -150,14 +155,14 @@ parse_config_options (const int io, int
 			else
 			{
 				fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
-				return NULL;
+				return -1;
 			}
 			GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
 		}
 		else
 		{
 			fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
-			return NULL;
+			return -1;
 		}
 	}
 
@@ -165,7 +170,7 @@ parse_config_options (const int io, int
 	if (my_params[io]->stream_name == NULL) my_params[io]->stream_name =
 			"BruteFIR stream";
 
-	return my_params[io];
+	return 0;
 }
 
 /**
@@ -232,7 +237,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 
 	init_settings (io, sample_rate, open_channels);
 
-	if (!parse_config_options (io, get_config_token))
+	if (parse_config_options (io, get_config_token) < 0)
 	{
 		fprintf (stderr, "Pulse I/O: Error parsing options.\n");
 		return NULL;
