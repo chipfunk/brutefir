@@ -26,10 +26,10 @@
 #define GET_TOKEN(token, errstr)                                               \
     if (get_config_token(&lexval) != token) {                                  \
         fprintf(stderr, "Pulse I/O: Parse error: " errstr);                     \
-        return NULL;                                                           \
+        return -1;                                                           \
     }
 
-struct settings
+struct bfio_pulse_settings
 {
   // BruteFIR value
   int io;
@@ -48,15 +48,15 @@ struct settings
   pa_buffer_attr buffer_attr;
   pa_channel_map channel_map;
 
-  pa_threaded_mainloop *my_pa_mainloop;    // resource: primary pulse-API access
+  pa_mainloop *my_pa_mainloop;    // resource: primary pulse-API access
   pa_context *pa_ctx;           // resource: keep PA-context
   pa_stream *pa_stream;         // resource: keep PA-stream
 };
 
-typedef struct settings pulse_settings_t;
+typedef struct bfio_pulse_settings bfio_pulse_settings_t;
 
-pulse_settings_t *my_params[2]; // Keep per in/out-stream, because ... fork()/threading?
-pulse_settings_t *my_params_by_fd[2];
+bfio_pulse_settings_t *my_params[2]; // Keep per in/out-stream, because ... fork()/threading?
+bfio_pulse_settings_t *my_params_by_fd[2];
 
 /**
  * Create a pipe to trap BruteFIR into thinking there is data-available.
@@ -71,7 +71,7 @@ pulse_settings_t *my_params_by_fd[2];
  * @return a file-descriptor to the pipes read OR write end. Returns -1 in case of error.
  */
 static int
-create_dummypipe (const int io, pulse_settings_t *settings)
+create_dummypipe (const int io, bfio_pulse_settings_t *settings)
 {
   int dummypipe[2];
   if (pipe (dummypipe) == -1)
@@ -101,6 +101,9 @@ create_dummypipe (const int io, pulse_settings_t *settings)
   return settings->dummypipe_fd;
 }
 
+/**
+ * Check current module is compiled for BruteFIRs module-API
+ */
 static int
 check_version (const int *version_major, const int *version_minor)
 {
@@ -117,8 +120,11 @@ check_version (const int *version_major, const int *version_minor)
   return true;
 }
 
+/**
+ * Import options from config-file
+ */
 static int
-parse_config_options (pulse_settings_t *into_settings, int
+parse_config_options (bfio_pulse_settings_t *into_settings, int
 (*get_config_token) (union bflexval *lexval))
 {
   union bflexval lexval;
@@ -150,14 +156,14 @@ parse_config_options (pulse_settings_t *into_settings, int
       else
       {
         fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
-        return NULL;
+        return -1;
       }
       GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
     }
     else
     {
       fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
-      return NULL;
+      return -1;
     }
   }
 
@@ -165,7 +171,7 @@ parse_config_options (pulse_settings_t *into_settings, int
   if (into_settings->stream_name == NULL) into_settings->stream_name =
       "BruteFIR stream";
 
-  return into_settings;
+  return 0;
 }
 
 /**
@@ -230,14 +236,14 @@ bfio_preinit (int *version_major, int *version_minor, int
     return NULL;
   }
 
-  pulse_settings_t *settings = malloc (sizeof(pulse_settings_t));
-  memset (settings, 0, sizeof(pulse_settings_t));
+  bfio_pulse_settings_t *settings = malloc (sizeof(bfio_pulse_settings_t));
+  memset (settings, 0, sizeof(bfio_pulse_settings_t));
 
   settings->io = io;
   settings->sample_rate = sample_rate;
   settings->open_channels = open_channels;
 
-  if (!parse_config_options (settings, get_config_token))
+  if (parse_config_options (settings, get_config_token) < 0)
   {
     fprintf (stderr, "Pulse I/O: Error parsing options.\n");
     return NULL;
@@ -260,13 +266,16 @@ bfio_preinit (int *version_major, int *version_minor, int
   return (void*) settings;
 }
 
+/**
+ * Callback
+ */
 static void
 _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
                      void *userdata)
 {
   fprintf (stderr, "Pulse I/O event CHECK.\n");
 
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   pa_stream_state_t state = pa_stream_get_state (settings->pa_stream);
 
@@ -274,23 +283,29 @@ _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
 
 }
 
+/**
+ * Called when the state of a stream changes.
+ */
 static void
 _pa_stream_state_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O state CHECK.\n");
 
 }
 
+/**
+ * Called when the stream can be written to.
+ */
 static void
-_pa_stream_write_cb (pa_stream *p, void *userdata)
+_pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
 //  fprintf (stderr, "Pulse I/O read CHECK.\n");
 
-  if (settings->io == BF_IN)
+//  if (settings->io == BF_IN)
   {
     fprintf (stderr, "Pulse I/O: can NOT write on record-stream.\n");
   }
@@ -300,10 +315,13 @@ _pa_stream_write_cb (pa_stream *p, void *userdata)
 //  pa_stream_begin_write(p, &data, 2);
 }
 
+/**
+ * Called when data are available in the stream.
+ */
 static void
-_pa_stream_read_cb (pa_stream *p, void *userdata)
+_pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O read CHECK.\n");
 
@@ -314,37 +332,49 @@ _pa_stream_read_cb (pa_stream *p, void *userdata)
 
 }
 
+/**
+ * An overflow occured.
+ */
 static void
 _pa_stream_overflow_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O overflow CHECK.\n");
 
 }
 
+/**
+ * An underflow occured.
+ */
 static void
 _pa_stream_underflow_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O underflow CHECK.\n");
 
 }
 
+/**
+ * PA server updated latency of stream.
+ */
 static void
 _pa_stream_latency_update_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O latency CHECK.\n");
 
 }
 
+/**
+ * PA server moved stream to another sink/source.
+ */
 static void
 _pa_stream_moved_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O moved CHECK.\n");
 
@@ -353,26 +383,32 @@ _pa_stream_moved_cb (pa_stream *p, void *userdata)
 static void
 _pa_stream_suspended_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O suspended.\n");
 
 }
 
+/**
+ * The buffer-attributes changed.
+ */
 static void
 _pa_stream_buffer_attr_cb (pa_stream *p, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   fprintf (stderr, "Pulse I/O: buffer-attr.\n");
 
 }
 
+/**
+ * Open a stream for given context.
+ */
 static int
-_pa_open_stream (pulse_settings_t *settings)
+_pa_stream_open (bfio_pulse_settings_t *settings)
 {
   const pa_stream_direction_t stream_direction =
-      (settings->io == BF_IN) ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
+      (settings->io == BF_OUT) ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
 
   pa_sample_spec sample_spec = { .format = settings->sample_format, .rate =
       settings->sample_rate, .channels = settings->open_channels, };
@@ -380,9 +416,31 @@ _pa_open_stream (pulse_settings_t *settings)
   pa_proplist *my_stream_proplist = pa_proplist_new ();
 
   settings->pa_stream = pa_stream_new_with_proplist (settings->pa_ctx,
-                                                        settings->stream_name,
-                                                        &sample_spec, NULL,
-                                                        my_stream_proplist);
+                                                     settings->stream_name,
+                                                     &sample_spec, NULL,
+                                                     my_stream_proplist);
+
+  pa_stream_set_event_callback (settings->pa_stream, _pa_stream_event_cb,
+                                settings);
+  pa_stream_set_state_callback (settings->pa_stream, _pa_stream_state_cb,
+                                settings);
+  pa_stream_set_write_callback (settings->pa_stream, _pa_stream_write_cb,
+                                settings);
+  pa_stream_set_read_callback (settings->pa_stream, _pa_stream_read_cb,
+                               settings);
+  pa_stream_set_overflow_callback (settings->pa_stream, _pa_stream_overflow_cb,
+                                   settings);
+  pa_stream_set_underflow_callback (settings->pa_stream,
+                                    _pa_stream_underflow_cb, settings);
+  pa_stream_set_latency_update_callback (settings->pa_stream,
+                                         _pa_stream_latency_update_cb,
+                                         settings);
+  pa_stream_set_moved_callback (settings->pa_stream, _pa_stream_moved_cb,
+                                settings);
+  pa_stream_set_suspended_callback (settings->pa_stream,
+                                    _pa_stream_suspended_cb, settings);
+  pa_stream_set_buffer_attr_callback (settings->pa_stream,
+                                      _pa_stream_buffer_attr_cb, settings);
 
   pa_stream_flags_t my_stream_flags = PA_STREAM_START_UNMUTED;
 
@@ -418,28 +476,6 @@ _pa_open_stream (pulse_settings_t *settings)
     return -1;
   }
 
-  pa_stream_set_event_callback (settings->pa_stream, _pa_stream_event_cb,
-                                settings);
-  pa_stream_set_state_callback (settings->pa_stream, _pa_stream_state_cb,
-                                settings);
-  pa_stream_set_write_callback (settings->pa_stream, _pa_stream_write_cb,
-                                settings);
-  pa_stream_set_read_callback (settings->pa_stream, _pa_stream_read_cb,
-                               settings);
-  pa_stream_set_overflow_callback (settings->pa_stream,
-                                   _pa_stream_overflow_cb, settings);
-  pa_stream_set_underflow_callback (settings->pa_stream,
-                                    _pa_stream_underflow_cb, settings);
-  pa_stream_set_latency_update_callback (settings->pa_stream,
-                                         _pa_stream_latency_update_cb,
-                                         settings);
-  pa_stream_set_moved_callback (settings->pa_stream, _pa_stream_moved_cb,
-                                settings);
-  pa_stream_set_suspended_callback (settings->pa_stream,
-                                    _pa_stream_suspended_cb, settings);
-  pa_stream_set_buffer_attr_callback (settings->pa_stream,
-                                      _pa_stream_buffer_attr_cb, settings);
-
   return 0;
 }
 
@@ -447,9 +483,9 @@ _pa_open_stream (pulse_settings_t *settings)
  * Callback whenever pulseaudio-context/-connection changes state.
  */
 static void
-_pa_state_cb (pa_context *c, void *userdata)
+_pa_context_state_cb (pa_context *c, void *userdata)
 {
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   pa_context_state_t state = pa_context_get_state (settings->pa_ctx);
   switch (state)
@@ -468,9 +504,7 @@ _pa_state_cb (pa_context *c, void *userdata)
       break; /**< The client is passing its application name to the daemon */
     case PA_CONTEXT_READY:
       fprintf (stderr, "Pulse I/O context ready, state %d.\n", state);
-
-      _pa_open_stream (settings);
-
+      _pa_stream_open (settings);
       break; /**< The connection is established, the context is ready to execute operations */
     case PA_CONTEXT_FAILED:
       fprintf (stderr, "Pulse I/O context failed, state %d.\n", state);
@@ -488,29 +522,37 @@ _pa_context_event_cb (pa_context *c, const char *name, pa_proplist *p,
   fprintf (stderr, "Pulse I/O context event callback, state %s.\n",
            pa_proplist_to_string (p));
 
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
 }
 
+/**
+ * ???
+ */
 static void
 _pa_context_subscribe_cb (pa_context *c, pa_subscription_event_type_t t,
                           uint32_t idx, void *userdata)
 {
   fprintf (stderr, "Pulse I/O CB context_subscribe.\n");
 
-  pulse_settings_t *settings = (pulse_settings_t*) userdata;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 }
 
+/**
+ * Connect to PA-server.
+ */
 static int
-_pa_open_connection (pa_mainloop_api *my_pa_api, pulse_settings_t *settings)
+_pa_context_connect (pa_mainloop_api *my_pa_api,
+                     bfio_pulse_settings_t *settings)
 {
   pa_proplist *my_pa_ctx_proplist = pa_proplist_new ();
   settings->pa_ctx = pa_context_new_with_proplist (my_pa_api, "my context",
-                                                      my_pa_ctx_proplist);
+                                                   my_pa_ctx_proplist);
 
-  pa_context_set_state_callback (settings->pa_ctx, _pa_state_cb, settings);
-  pa_context_set_subscribe_callback (settings->pa_ctx,
-                                     _pa_context_subscribe_cb, settings);
+  pa_context_set_state_callback (settings->pa_ctx, _pa_context_state_cb,
+                                 settings);
+  pa_context_set_subscribe_callback (settings->pa_ctx, _pa_context_subscribe_cb,
+                                     settings);
   pa_context_set_event_callback (settings->pa_ctx, _pa_context_event_cb,
                                  settings);
 
@@ -529,8 +571,11 @@ _pa_open_connection (pa_mainloop_api *my_pa_api, pulse_settings_t *settings)
   return 0;
 }
 
+/**
+ * Create appropriate buffer-attributes.
+ */
 static pa_buffer_attr
-init_buffer_attr (const int io, const int period_size)
+pa_buffer_attr_new (const int io, const int period_size)
 {
   pa_buffer_attr buffer_attr = { .maxlength = period_size };
 
@@ -568,15 +613,9 @@ bfio_init (
     (*process_callback) (void **callback_states[2], int callback_state_count[2],
                          void **buffers[2], int frame_count, int event))
 {
-  pulse_settings_t *settings = (pulse_settings_t*) params;
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) params;
 
-  settings->buffer_attr = init_buffer_attr (io, period_size);
-
-  settings->my_pa_mainloop = pa_threaded_mainloop_new ();
-  pa_mainloop_api *my_pa_api = pa_threaded_mainloop_get_api (
-      settings->my_pa_mainloop);
-
-  _pa_open_connection (my_pa_api, settings);
+  settings->buffer_attr = pa_buffer_attr_new (io, period_size);
 
   *device_period_size = 4096;
   *isinterleaved = true;
@@ -591,29 +630,19 @@ bfio_start (int io)
 {
   fprintf (stderr, "Pulse I/O: start: %d.\n", io);
 
-  //  pa_stream_direction_t stream_direction;
-//  if (io == BF_IN)
-//  {
-//    stream_direction = PA_STREAM_RECORD;
-//  }
-//  else if (io == BF_OUT)
-//  {
-//    stream_direction = PA_STREAM_PLAYBACK;
-//  }
-//  else
-//  {
-//    fprintf (stderr,
-//             "Pulse I/O module could not determine stream-direction.\n");
-//    return -1;
-//  }
+  my_params[io]->my_pa_mainloop = pa_mainloop_new ();
+  pa_mainloop_api *my_pa_api = pa_mainloop_get_api (
+      my_params[io]->my_pa_mainloop);
 
-  return pa_threaded_mainloop_start (my_params[io]->my_pa_mainloop);
+  _pa_context_connect (my_pa_api, my_params[io]);
+
+  return pa_mainloop_run (my_params[io]->my_pa_mainloop, 0);
 }
 
 void
 bfio_stop (int io)
 {
-  pulse_settings_t *settings = my_params[io];
+  bfio_pulse_settings_t *settings = my_params[io];
 
   close (settings->dummypipe_fd);
   settings->dummypipe_fd = -1;
@@ -632,7 +661,7 @@ bfio_stop (int io)
              pa_context_errno (settings->pa_ctx));
   }
 
-  pa_threaded_mainloop_free (settings->my_pa_mainloop);
+  pa_mainloop_free (settings->my_pa_mainloop);
 }
 
 int
