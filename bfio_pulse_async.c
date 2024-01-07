@@ -273,13 +273,13 @@ static void
 _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
                      void *userdata)
 {
-  fprintf (stderr, "Pulse I/O event CHECK.\n");
+  fprintf (stderr, "Pulse I/O: event CHECK.\n");
 
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   pa_stream_state_t state = pa_stream_get_state (settings->pa_stream);
 
-  fprintf (stderr, "Pulse I/O stream-event callback, state %d.\n", state);
+  fprintf (stderr, "Pulse I/O: stream-event callback, state %d.\n", state);
 
 }
 
@@ -291,7 +291,7 @@ _pa_stream_state_cb (pa_stream *p, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O state CHECK.\n");
+  fprintf (stderr, "Pulse I/O: state CHECK.\n");
 
 }
 
@@ -303,7 +303,7 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-//  fprintf (stderr, "Pulse I/O read CHECK.\n");
+//  fprintf (stderr, "Pulse I/O: read CHECK.\n");
 
 //  if (settings->io == BF_IN)
   {
@@ -323,7 +323,7 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O read CHECK.\n");
+  fprintf (stderr, "Pulse I/O: read CHECK.\n");
 
 //  if (settings->io == BF_OUT)
   {
@@ -340,7 +340,7 @@ _pa_stream_overflow_cb (pa_stream *p, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O overflow CHECK.\n");
+  fprintf (stderr, "Pulse I/O: overflow CHECK.\n");
 
 }
 
@@ -352,7 +352,7 @@ _pa_stream_underflow_cb (pa_stream *p, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O underflow CHECK.\n");
+  fprintf (stderr, "Pulse I/O: underflow CHECK.\n");
 
 }
 
@@ -364,7 +364,7 @@ _pa_stream_latency_update_cb (pa_stream *p, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O latency CHECK.\n");
+  fprintf (stderr, "Pulse I/O: latency CHECK.\n");
 
 }
 
@@ -376,7 +376,7 @@ _pa_stream_moved_cb (pa_stream *p, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O moved CHECK.\n");
+  fprintf (stderr, "Pulse I/O: moved CHECK.\n");
 
 }
 
@@ -385,7 +385,7 @@ _pa_stream_suspended_cb (pa_stream *p, void *userdata)
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
-  fprintf (stderr, "Pulse I/O suspended.\n");
+  fprintf (stderr, "Pulse I/O: suspended.\n");
 
 }
 
@@ -450,7 +450,7 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
                                   &settings->buffer_attr, my_stream_flags) != 0)
     {
       fprintf (stderr,
-               "Pulse I/O error connecting recording-stream, code %d.\n",
+               "Pulse I/O: error connecting recording-stream, code %d.\n",
                pa_context_errno (settings->pa_ctx));
       return -1;
     }
@@ -464,7 +464,7 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
                                     &settings->buffer_attr, my_stream_flags,
                                     volume, sync_stream) != 0)
     {
-      fprintf (stderr, "Pulse I/O error connecting playback-stream, code %d.\n",
+      fprintf (stderr, "Pulse I/O: error connecting playback-stream, code %d.\n",
                pa_context_errno (settings->pa_ctx));
       return -1;
     }
@@ -472,7 +472,7 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
   else
   {
     fprintf ( stderr,
-             "Pulse I/O module could not determine stream-direction.\n");
+             "Pulse I/O: module could not determine stream-direction.\n");
     return -1;
   }
 
@@ -491,26 +491,26 @@ _pa_context_state_cb (pa_context *c, void *userdata)
   switch (state)
   {
     case PA_CONTEXT_UNCONNECTED:
-      fprintf (stderr, "Pulse I/O context not connected, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: context not connected, state %d.\n", state);
       break; /**< The context hasn't been connected yet */
     case PA_CONTEXT_CONNECTING:
-      fprintf (stderr, "Pulse I/O connecting, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: connecting, state %d.\n", state);
       break; /**< A connection is being established */
     case PA_CONTEXT_AUTHORIZING:
-      fprintf (stderr, "Pulse I/O authorizing, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: authorizing, state %d.\n", state);
       break; /**< The client is authorizing itself to the daemon */
     case PA_CONTEXT_SETTING_NAME:
-      fprintf (stderr, "Pulse I/O setting name, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: setting name, state %d.\n", state);
       break; /**< The client is passing its application name to the daemon */
     case PA_CONTEXT_READY:
-      fprintf (stderr, "Pulse I/O context ready, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: context ready, state %d.\n", state);
       _pa_stream_open (settings);
       break; /**< The connection is established, the context is ready to execute operations */
     case PA_CONTEXT_FAILED:
-      fprintf (stderr, "Pulse I/O context failed, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: context failed, state %d.\n", state);
       break; /**< The connection failed or was disconnected */
     case PA_CONTEXT_TERMINATED:
-      fprintf (stderr, "Pulse I/O context terminated, state %d.\n", state);
+      fprintf (stderr, "Pulse I/O: context terminated, state %d.\n", state);
       break; /**< The connection was terminated cleanly */
   }
 }
@@ -519,7 +519,7 @@ static void
 _pa_context_event_cb (pa_context *c, const char *name, pa_proplist *p,
                       void *userdata)
 {
-  fprintf (stderr, "Pulse I/O context event callback, state %s.\n",
+  fprintf (stderr, "Pulse I/O: context event callback, state %s.\n",
            pa_proplist_to_string (p));
 
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
@@ -533,7 +533,7 @@ static void
 _pa_context_subscribe_cb (pa_context *c, pa_subscription_event_type_t t,
                           uint32_t idx, void *userdata)
 {
-  fprintf (stderr, "Pulse I/O CB context_subscribe.\n");
+  fprintf (stderr, "Pulse I/O: callback context_subscribe.\n");
 
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 }
@@ -563,7 +563,7 @@ _pa_context_connect (pa_mainloop_api *my_pa_api,
   if (pa_context_connect (settings->pa_ctx, settings->server,
                           my_pa_context_flags, my_ctx_spawn_api) < 0)
   {
-    fprintf (stderr, "Pulse I/O connection error, code %d.\n",
+    fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
              pa_context_errno (settings->pa_ctx));
     return -1;
   }
@@ -650,14 +650,14 @@ bfio_stop (int io)
   if (pa_stream_disconnect (settings->pa_stream) != 0)
   {
     fprintf (stderr,
-             "Pulse I/O error disconnecting playback-stream, code %d.\n",
+             "Pulse I/O: error disconnecting playback-stream, code %d.\n",
              pa_context_errno (settings->pa_ctx));
   }
 
   if (pa_stream_disconnect (settings->pa_stream) != 0)
   {
     fprintf (stderr,
-             "Pulse I/O error disconnecting recording-stream, code %d.\n",
+             "Pulse I/O: error disconnecting recording-stream, code %d.\n",
              pa_context_errno (settings->pa_ctx));
   }
 
@@ -670,7 +670,7 @@ bfio_read (int fd, void *buf, int offset, int count)
 //  size_t nbytes = count;
 //  if (pa_stream_peek (my_params_by_fd[fd]->my_pa_stream, buf, &nbytes) < 0)
 //  {
-//    fprintf (stderr, "Pulse I/O error reading recording-stream, code %d.\n",
+//    fprintf (stderr, "Pulse I/O: error reading recording-stream, code %d.\n",
 //             pa_context_errno (my_params_by_fd[fd]->my_pa_ctx));
 //    return -1;
 //  }
@@ -684,7 +684,7 @@ bfio_write (int fd, const void *buf, int offset, int count)
 //  if (pa_stream_write (my_params_by_fd[fd]->my_pa_stream, buf, count, NULL, 0,
 //  PA_SEEK_RELATIVE) != 0)
 //  {
-//    fprintf (stderr, "Pulse I/O error connecting playback-stream, code %d.\n",
+//    fprintf (stderr, "Pulse I/O: error connecting playback-stream, code %d.\n",
 //             pa_context_errno (my_params_by_fd[fd]->my_pa_ctx));
 //    return -1;
 //  }
