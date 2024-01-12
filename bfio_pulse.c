@@ -44,6 +44,7 @@ struct settings
   char *stream_name;	// The stream-name as shown in PA
   char *device;		// Device-name to connect to, or NULL for default
   pa_sample_format_t sample_format;
+  pa_buffer_attr *buffer_attr;
 };
 
 static struct settings *my_params[2];// Keep per in/out-stream, because ... fork()/threading?
@@ -115,6 +116,78 @@ init_settings (const int io, const int sample_rate, const int open_channels)
   my_params[io]->io = io;
   my_params[io]->sample_rate = sample_rate;
   my_params[io]->open_channels = open_channels;
+
+  my_params[io]->buffer_attr = NULL;
+}
+
+static int
+parse_config_options_buffer_attr (const int io, pa_buffer_attr *buffer_attr, int
+(*get_config_token) (union bflexval *lexval))
+{
+  buffer_attr->maxlength = -1;
+  buffer_attr->tlength = -1;
+  buffer_attr->prebuf = -1;
+  buffer_attr->minreq = -1;
+  buffer_attr->fragsize = -1;
+
+  union bflexval lexval;
+  int token;
+
+  if (BF_LEX_LBRACE != get_config_token (&lexval))
+    {
+      fprintf (stderr, "Pulse I/O: Parse error: expected {.\n");
+      return -1;
+    }
+
+  while ((token = get_config_token (&lexval)) > 0)
+    {
+      if (token == BF_LEX_RBRACE)
+	{
+	  return 0;
+	}
+      else if (token == BF_LEXVAL_FIELD)
+	{
+	  if (strcmp (lexval.field, "maxlength") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL,
+			"\"maxlength\" expects integer from -1 and up.\n");
+	      buffer_attr->maxlength = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "tlength") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      buffer_attr->tlength = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "prebuf") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      buffer_attr->prebuf = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "minreq") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      buffer_attr->minreq = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "fragsize") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      buffer_attr->fragsize = (int) lexval.real;
+	    }
+	  else
+	    {
+	      fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
+	      return -1;
+	    }
+	  GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
+	}
+      else
+	{
+	  fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
+	  return -1;
+	}
+    }
+
+  return 0;
 }
 
 /**
@@ -141,6 +214,14 @@ parse_config_options (const int io, int
 	    {
 	      GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
 	      my_params[io]->device = strdup (lexval.string);
+	    }
+	  else if (strcmp (lexval.field, "buffer_attr") == 0)
+	    {
+	      my_params[io]->buffer_attr = malloc (sizeof(pa_buffer_attr));
+	      memset (my_params[io]->buffer_attr, 0, sizeof(pa_buffer_attr));
+
+	      parse_config_options_buffer_attr (io, my_params[io]->buffer_attr,
+						get_config_token);
 	    }
 	  else if (strcmp (lexval.field, "app_name") == 0)
 	    {
@@ -332,28 +413,6 @@ bfio_start (const int io)
       return -1;
     }
 
-  pa_buffer_attr buffer_attr =
-    { .maxlength = 4 * my_params[io]->period_size };
-
-  if (io == BF_IN)
-    {
-      // BF_IN is a PA recording-stream
-      buffer_attr.fragsize = my_params[io]->period_size;
-    }
-  else if (io == BF_OUT)
-    {
-      // BF_IN is a PA recording-stream
-      buffer_attr.tlength = -1;
-      buffer_attr.minreq = my_params[io]->period_size;
-      buffer_attr.prebuf = -1;
-    }
-  else
-    {
-      fprintf (stderr,
-	       "Pulse I/O module could not determine stream-direction.\n");
-      return -1;
-    }
-
   pa_handle[io] = _pa_simple_open (my_params[io]->server,
 				   my_params[io]->app_name,
 				   my_params[io]->device,
@@ -362,7 +421,7 @@ bfio_start (const int io)
 				   my_params[io]->sample_rate,
 				   my_params[io]->open_channels,
 				   NULL,
-				   &buffer_attr);
+				   my_params[io]->buffer_attr);
 
   if (pa_handle[io] == NULL)
     {
