@@ -33,7 +33,6 @@ struct settings
   int io;
   int sample_rate;
   int open_channels;
-  int period_size;
 
   // Dummy-pipe value
   int dummypipe_fd;		// File-descriptor for dummy-pipe.
@@ -43,8 +42,8 @@ struct settings
   char *server;		// Name of server to connect to, NULL for default
   char *stream_name;	// The stream-name as shown in PA
   char *device;		// Device-name to connect to, or NULL for default
-  pa_sample_format_t sample_format;
-  pa_buffer_attr *buffer_attr;
+  struct pa_sample_spec sample_spec;
+  struct pa_buffer_attr *buffer_attr;
 };
 
 static struct settings *my_params[2];// Keep per in/out-stream, because ... fork()/threading?
@@ -262,9 +261,9 @@ parse_config_options (const int io, int
  * @return PA sample-format to use, or PA_SAMPLE_INVALID if no sample-format could be found.
  */
 static const pa_sample_format_t
-detect_pa_sample_format (const int *bf_sample_format)
+detect_pa_sample_format (const int bf_sample_format)
 {
-  switch (*bf_sample_format)
+  switch (bf_sample_format)
     {
     case BF_SAMPLE_FORMAT_AUTO:
 #ifdef LITTLE_ENDIAN
@@ -325,14 +324,6 @@ bfio_preinit (int *version_major, int *version_minor, int
       return NULL;
     }
 
-  my_params[io]->sample_format = detect_pa_sample_format (sample_format);
-  if (my_params[io]->sample_format == PA_SAMPLE_INVALID)
-    {
-      fprintf (stderr,
-	       "Pulse I/O: Could not find appropriate sample-format for PA.\n");
-      return NULL;
-    }
-
   *uses_sample_clock = 0;
 
   return (void*) my_params[io];
@@ -358,7 +349,17 @@ bfio_init (
   *device_period_size = period_size;
   *isinterleaved = true;
 
-  my_params[io]->period_size = period_size;
+  pa_sample_format_t pa_sample_format = detect_pa_sample_format (sample_format);
+  if (pa_sample_format == PA_SAMPLE_INVALID)
+    {
+      fprintf (stderr,
+	       "Pulse I/O: Could not find appropriate sample-format for PA.\n");
+      return -1;
+    }
+
+  my_params[io]->sample_spec.format = pa_sample_format;
+  my_params[io]->sample_spec.rate = sample_rate;
+  my_params[io]->sample_spec.channels = open_channels;
 
   // Set PA-buffer-attr if none configured
   if (my_params[io]->buffer_attr == NULL)
@@ -366,13 +367,16 @@ bfio_init (
       my_params[io]->buffer_attr = malloc (sizeof(pa_buffer_attr));
       memset (my_params[io]->buffer_attr, 0, sizeof(pa_buffer_attr));
 
+      uint32_t nbytes = period_size
+	  * pa_sample_size (&my_params[io]->sample_spec);
+
       if (io == BF_IN)
 	{
-	  my_params[io]->buffer_attr->fragsize = period_size;
+	  my_params[io]->buffer_attr->fragsize = nbytes;
 	}
       else if (io == BF_OUT)
 	{
-	  my_params[io]->buffer_attr->tlength = period_size;
+	  my_params[io]->buffer_attr->tlength = nbytes;
 	}
       else
 	{
@@ -388,16 +392,13 @@ static pa_simple*
 _pa_simple_open (const char *server, const char *app_name, const char *device,
 		 const char *stream_name,
 		 const pa_stream_direction_t stream_direction,
-		 const pa_sample_format_t sample_format, const int sample_rate,
-		 const int channels, const pa_channel_map *channel_map,
+		 const pa_sample_spec *sample_spec,
+		 const pa_channel_map *channel_map,
 		 const pa_buffer_attr *buffer_attr)
 {
-  const pa_sample_spec sample_spec =
-    { sample_format, sample_rate, channels };
-
   int errno = 0;
   pa_simple *handle = pa_simple_new (server, app_name, stream_direction, device,
-				     stream_name, &sample_spec, channel_map,
+				     stream_name, sample_spec, channel_map,
 				     buffer_attr, &errno);
 
   if (handle == NULL)
@@ -438,11 +439,9 @@ bfio_start (const int io)
 				   my_params[io]->app_name,
 				   my_params[io]->device,
 				   my_params[io]->stream_name, stream_direction,
-				   my_params[io]->sample_format,
-				   my_params[io]->sample_rate,
-				   my_params[io]->open_channels,
+				   &my_params[io]->sample_spec,
 				   NULL,
-				   my_params[io]->buffer_attr);
+				   &my_params[io]->buffer_attr);
 
   if (pa_handle[io] == NULL)
     {
