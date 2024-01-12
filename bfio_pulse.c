@@ -29,11 +29,6 @@
 
 struct settings
 {
-  // BruteFIR value
-  int io;
-  int sample_rate;
-  int open_channels;
-
   // Dummy-pipe value
   int dummypipe_fd;		// File-descriptor for dummy-pipe.
 
@@ -113,10 +108,6 @@ init_settings (const int io, const int sample_rate, const int open_channels)
 {
   my_params[io] = malloc (sizeof(struct settings));
   memset (my_params[io], 0, sizeof(struct settings));
-
-  my_params[io]->io = io;
-  my_params[io]->sample_rate = sample_rate;
-  my_params[io]->open_channels = open_channels;
 
   my_params[io]->buffer_attr = NULL;
 }
