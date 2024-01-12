@@ -45,7 +45,7 @@ struct bfio_pulse_settings
   char *device;         // Device-name to connect stream to, or NULL for default
   char *stream_name;      // The stream-name as shown in PA
   pa_sample_format_t sample_format;
-  pa_buffer_attr buffer_attr;
+  pa_buffer_attr *buffer_attr;
   pa_channel_map channel_map;
 
   pa_mainloop *my_pa_mainloop;    // resource: primary pulse-API access
@@ -75,26 +75,26 @@ create_dummypipe (const int io, bfio_pulse_settings_t *settings)
 {
   int dummypipe[2];
   if (pipe (dummypipe) == -1)
-  {
-    fprintf (stderr, "Pulse I/O: Could not create pipe.\n");
-    return -1;
-  }
+    {
+      fprintf (stderr, "Pulse I/O: Could not create pipe.\n");
+      return -1;
+    }
 
   if (io == BF_IN)
-  {
-    close (dummypipe[1]);   // close unused write-end
-    settings->dummypipe_fd = dummypipe[0];
-  }
+    {
+      close (dummypipe[1]);   // close unused write-end
+      settings->dummypipe_fd = dummypipe[0];
+    }
   else if (io == BF_OUT)
-  {
-    close (dummypipe[0]);   // Close unused read-end
-    settings->dummypipe_fd = dummypipe[1];
-  }
+    {
+      close (dummypipe[0]);   // Close unused read-end
+      settings->dummypipe_fd = dummypipe[1];
+    }
   else
-  {
-    fprintf (stderr, "Pulse I/O: Invalid IO direction.\n");
-    return -1;
-  }
+    {
+      fprintf (stderr, "Pulse I/O: Invalid IO direction.\n");
+      return -1;
+    }
 
   my_params_by_fd[settings->dummypipe_fd] = settings;
 
@@ -108,16 +108,86 @@ static int
 check_version (const int *version_major, const int *version_minor)
 {
   if (*version_major != BF_VERSION_MAJOR)
-  {
-    return false;
-  }
+    {
+      return false;
+    }
 
   if (*version_minor != BF_VERSION_MINOR)
-  {
-    return false;
-  }
+    {
+      return false;
+    }
 
   return true;
+}
+
+static int
+parse_config_options_buffer_attr (pa_buffer_attr *into_buffer_attr, int
+(*get_config_token) (union bflexval *lexval))
+{
+  into_buffer_attr->maxlength = -1;
+  into_buffer_attr->tlength = -1;
+  into_buffer_attr->prebuf = -1;
+  into_buffer_attr->minreq = -1;
+  into_buffer_attr->fragsize = -1;
+
+  union bflexval lexval;
+  int token;
+
+  if (BF_LEX_LBRACE != get_config_token (&lexval))
+    {
+      fprintf (stderr, "Pulse I/O: Parse error: expected {.\n");
+      return -1;
+    }
+
+  while ((token = get_config_token (&lexval)) > 0)
+    {
+      if (token == BF_LEX_RBRACE)
+	{
+	  return 0;
+	}
+      else if (token == BF_LEXVAL_FIELD)
+	{
+	  if (strcmp (lexval.field, "maxlength") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL,
+			"\"maxlength\" expects integer from -1 and up.\n");
+	      into_buffer_attr->maxlength = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "tlength") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      into_buffer_attr->tlength = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "prebuf") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      into_buffer_attr->prebuf = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "minreq") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      into_buffer_attr->minreq = (int) lexval.real;
+	    }
+	  else if (strcmp (lexval.field, "fragsize") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_REAL, "expected integer from -1 and up.\n");
+	      into_buffer_attr->fragsize = (int) lexval.real;
+	    }
+	  else
+	    {
+	      fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
+	      return -1;
+	    }
+	  GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
+	}
+      else
+	{
+	  fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
+	  return -1;
+	}
+    }
+
+  return 0;
 }
 
 /**
@@ -127,49 +197,60 @@ static int
 parse_config_options (bfio_pulse_settings_t *into_settings, int
 (*get_config_token) (union bflexval *lexval))
 {
+  into_settings->buffer_attr = NULL;
+
   union bflexval lexval;
   int token;
   while ((token = get_config_token (&lexval)) > 0)
-  {
-    if (token == BF_LEXVAL_FIELD)
     {
-      if (strcmp (lexval.field, "server") == 0)
-      {
-        GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-        into_settings->server = strdup (lexval.string);
-      }
-      else if (strcmp (lexval.field, "device") == 0)
-      {
-        GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-        into_settings->device = strdup (lexval.string);
-      }
-      else if (strcmp (lexval.field, "app_name") == 0)
-      {
-        GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-        into_settings->app_name = strdup (lexval.string);
-      }
-      else if (strcmp (lexval.field, "stream_name") == 0)
-      {
-        GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-        into_settings->stream_name = strdup (lexval.string);
-      }
-      else
-      {
-        fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
-        return -1;
-      }
-      GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
-    }
-    else
-    {
-      fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
-      return -1;
-    }
-  }
+      if (token == BF_LEXVAL_FIELD)
+	{
+	  if (strcmp (lexval.field, "server") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+	      into_settings->server = strdup (lexval.string);
+	    }
+	  else if (strcmp (lexval.field, "device") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+	      into_settings->device = strdup (lexval.string);
+	    }
+	  else if (strcmp (lexval.field, "app_name") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+	      into_settings->app_name = strdup (lexval.string);
+	    }
+	  else if (strcmp (lexval.field, "stream_name") == 0)
+	    {
+	      GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
+	      into_settings->stream_name = strdup (lexval.string);
+	    }
+	  else if (strcmp (lexval.field, "buffer_attr") == 0)
+	    {
+	      into_settings->buffer_attr = malloc (sizeof(pa_buffer_attr));
+	      memset (into_settings->buffer_attr, 0, sizeof(pa_buffer_attr));
 
-  if (into_settings->app_name == NULL) into_settings->app_name = "BruteFIR";
-  if (into_settings->stream_name == NULL) into_settings->stream_name =
-      "BruteFIR stream";
+	      parse_config_options_buffer_attr (into_settings->buffer_attr,
+						get_config_token);
+	    }
+	  else
+	    {
+	      fprintf (stderr, "Pulse I/O: Parse error: unknown field.\n");
+	      return -1;
+	    }
+	  GET_TOKEN(BF_LEX_EOS, "expected end of statement (;).\n");
+	}
+      else
+	{
+	  fprintf (stderr, "Pulse I/O: Parse error: expected field.\n");
+	  return -1;
+	}
+    }
+
+  if (into_settings->app_name == NULL)
+    into_settings->app_name = "BruteFIR";
+  if (into_settings->stream_name == NULL)
+    into_settings->stream_name = "BruteFIR stream";
 
   return 0;
 }
@@ -184,7 +265,7 @@ static const pa_sample_format_t
 detect_pa_sample_format (const int *bf_sample_format)
 {
   switch (*bf_sample_format)
-  {
+    {
     case BF_SAMPLE_FORMAT_AUTO:
 #ifdef LITTLE_ENDIAN
       return PA_SAMPLE_S32LE;
@@ -215,7 +296,7 @@ detect_pa_sample_format (const int *bf_sample_format)
       return PA_SAMPLE_FLOAT32BE;
     default:
       // noop
-  }
+    }
 
   return PA_SAMPLE_INVALID;
 }
@@ -223,18 +304,18 @@ detect_pa_sample_format (const int *bf_sample_format)
 void*
 bfio_preinit (int *version_major, int *version_minor, int
 (*get_config_token) (union bflexval *lexval),
-              int io, int *sample_format, int sample_rate, int open_channels,
-              int *uses_sample_clock, int *callback_sched_policy,
-              struct sched_param *callback_sched_param, int _debug)
+	      int io, int *sample_format, int sample_rate, int open_channels,
+	      int *uses_sample_clock, int *callback_sched_policy,
+	      struct sched_param *callback_sched_param, int _debug)
 {
   if (!check_version (version_major, version_minor))
-  {
-    fprintf (
-        stderr,
-        "Pulse I/O: Mismatching version-numbers. Expected BF_VERSION_MAJOR.BF_VERSION_MINOR, got %d.%d.\n",
-        *version_major, *version_minor);
-    return NULL;
-  }
+    {
+      fprintf (
+	  stderr,
+	  "Pulse I/O: Mismatching version-numbers. Expected BF_VERSION_MAJOR.BF_VERSION_MINOR, got %d.%d.\n",
+	  *version_major, *version_minor);
+      return NULL;
+    }
 
   bfio_pulse_settings_t *settings = malloc (sizeof(bfio_pulse_settings_t));
   memset (settings, 0, sizeof(bfio_pulse_settings_t));
@@ -244,24 +325,22 @@ bfio_preinit (int *version_major, int *version_minor, int
   settings->open_channels = open_channels;
 
   if (parse_config_options (settings, get_config_token) < 0)
-  {
-    fprintf (stderr, "Pulse I/O: Error parsing options.\n");
-    return NULL;
-  }
+    {
+      fprintf (stderr, "Pulse I/O: Error parsing options.\n");
+      return NULL;
+    }
 
   pa_sample_format_t pa_sample_format = detect_pa_sample_format (sample_format);
   if (pa_sample_format == PA_SAMPLE_INVALID)
-  {
-    fprintf (stderr,
-             "Pulse I/O: Could not find appropriate sample-format for PA.\n");
-    return NULL;
-  }
+    {
+      fprintf (stderr,
+	       "Pulse I/O: Could not find appropriate sample-format for PA.\n");
+      return NULL;
+    }
 
   settings->sample_format = pa_sample_format;
 
   *uses_sample_clock = 0;
-
-  fprintf (stderr, "XXX: %u.\n", settings);
 
   return (void*) settings;
 }
@@ -271,7 +350,7 @@ bfio_preinit (int *version_major, int *version_minor, int
  */
 static void
 _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
-                     void *userdata)
+		     void *userdata)
 {
   fprintf (stderr, "Pulse I/O: event CHECK.\n");
 
@@ -306,9 +385,9 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
 //  fprintf (stderr, "Pulse I/O: read CHECK.\n");
 
 //  if (settings->io == BF_IN)
-  {
-    fprintf (stderr, "Pulse I/O: can NOT write on record-stream.\n");
-  }
+    {
+      fprintf (stderr, "Pulse I/O: can NOT write on record-stream.\n");
+    }
 
 //  char data = 2;
 
@@ -326,9 +405,9 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
   fprintf (stderr, "Pulse I/O: read CHECK.\n");
 
 //  if (settings->io == BF_OUT)
-  {
-    fprintf (stderr, "Pulse I/O: can NOT read on playback-stream.\n");
-  }
+    {
+      fprintf (stderr, "Pulse I/O: can NOT read on playback-stream.\n");
+    }
 
 }
 
@@ -410,71 +489,74 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
   const pa_stream_direction_t stream_direction =
       (settings->io == BF_OUT) ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
 
-  pa_sample_spec sample_spec = { .format = settings->sample_format, .rate =
-      settings->sample_rate, .channels = settings->open_channels, };
+  pa_sample_spec sample_spec =
+    { .format = settings->sample_format, .rate = settings->sample_rate,
+	.channels = settings->open_channels, };
 
   pa_proplist *my_stream_proplist = pa_proplist_new ();
 
   settings->pa_stream = pa_stream_new_with_proplist (settings->pa_ctx,
-                                                     settings->stream_name,
-                                                     &sample_spec, NULL,
-                                                     my_stream_proplist);
+						     settings->stream_name,
+						     &sample_spec, NULL,
+						     my_stream_proplist);
 
   pa_stream_set_event_callback (settings->pa_stream, _pa_stream_event_cb,
-                                settings);
+				settings);
   pa_stream_set_state_callback (settings->pa_stream, _pa_stream_state_cb,
-                                settings);
+				settings);
   pa_stream_set_write_callback (settings->pa_stream, _pa_stream_write_cb,
-                                settings);
+				settings);
   pa_stream_set_read_callback (settings->pa_stream, _pa_stream_read_cb,
-                               settings);
+			       settings);
   pa_stream_set_overflow_callback (settings->pa_stream, _pa_stream_overflow_cb,
-                                   settings);
+				   settings);
   pa_stream_set_underflow_callback (settings->pa_stream,
-                                    _pa_stream_underflow_cb, settings);
+				    _pa_stream_underflow_cb, settings);
   pa_stream_set_latency_update_callback (settings->pa_stream,
-                                         _pa_stream_latency_update_cb,
-                                         settings);
+					 _pa_stream_latency_update_cb,
+					 settings);
   pa_stream_set_moved_callback (settings->pa_stream, _pa_stream_moved_cb,
-                                settings);
+				settings);
   pa_stream_set_suspended_callback (settings->pa_stream,
-                                    _pa_stream_suspended_cb, settings);
+				    _pa_stream_suspended_cb, settings);
   pa_stream_set_buffer_attr_callback (settings->pa_stream,
-                                      _pa_stream_buffer_attr_cb, settings);
+				      _pa_stream_buffer_attr_cb, settings);
 
   pa_stream_flags_t my_stream_flags = PA_STREAM_START_UNMUTED;
 
   if (stream_direction == PA_STREAM_RECORD)
-  {
-    if (pa_stream_connect_record (settings->pa_stream, settings->device,
-                                  &settings->buffer_attr, my_stream_flags) != 0)
     {
-      fprintf (stderr,
-               "Pulse I/O: error connecting recording-stream, code %d.\n",
-               pa_context_errno (settings->pa_ctx));
-      return -1;
+      if (pa_stream_connect_record (settings->pa_stream, settings->device,
+				    &settings->buffer_attr, my_stream_flags)
+	  != 0)
+	{
+	  fprintf (stderr,
+		   "Pulse I/O: error connecting recording-stream, code %d.\n",
+		   pa_context_errno (settings->pa_ctx));
+	  return -1;
+	}
     }
-  }
   else if (stream_direction == PA_STREAM_PLAYBACK)
-  {
-    pa_cvolume *volume = NULL;
-    pa_stream *sync_stream = NULL;
-
-    if (pa_stream_connect_playback (settings->pa_stream, settings->device,
-                                    &settings->buffer_attr, my_stream_flags,
-                                    volume, sync_stream) != 0)
     {
-      fprintf (stderr, "Pulse I/O: error connecting playback-stream, code %d.\n",
-               pa_context_errno (settings->pa_ctx));
+      pa_cvolume *volume = NULL;
+      pa_stream *sync_stream = NULL;
+
+      if (pa_stream_connect_playback (settings->pa_stream, settings->device,
+				      settings->buffer_attr, my_stream_flags,
+				      volume, sync_stream) != 0)
+	{
+	  fprintf (stderr,
+		   "Pulse I/O: error connecting playback-stream, code %d.\n",
+		   pa_context_errno (settings->pa_ctx));
+	  return -1;
+	}
+    }
+  else
+    {
+      fprintf ( stderr,
+	       "Pulse I/O: module could not determine stream-direction.\n");
       return -1;
     }
-  }
-  else
-  {
-    fprintf ( stderr,
-             "Pulse I/O: module could not determine stream-direction.\n");
-    return -1;
-  }
 
   return 0;
 }
@@ -489,7 +571,7 @@ _pa_context_state_cb (pa_context *c, void *userdata)
 
   pa_context_state_t state = pa_context_get_state (settings->pa_ctx);
   switch (state)
-  {
+    {
     case PA_CONTEXT_UNCONNECTED:
       fprintf (stderr, "Pulse I/O: context not connected, state %d.\n", state);
       break; /**< The context hasn't been connected yet */
@@ -512,15 +594,15 @@ _pa_context_state_cb (pa_context *c, void *userdata)
     case PA_CONTEXT_TERMINATED:
       fprintf (stderr, "Pulse I/O: context terminated, state %d.\n", state);
       break; /**< The connection was terminated cleanly */
-  }
+    }
 }
 
 static void
 _pa_context_event_cb (pa_context *c, const char *name, pa_proplist *p,
-                      void *userdata)
+		      void *userdata)
 {
   fprintf (stderr, "Pulse I/O: context event callback, state %s.\n",
-           pa_proplist_to_string (p));
+	   pa_proplist_to_string (p));
 
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
@@ -531,7 +613,7 @@ _pa_context_event_cb (pa_context *c, const char *name, pa_proplist *p,
  */
 static void
 _pa_context_subscribe_cb (pa_context *c, pa_subscription_event_type_t t,
-                          uint32_t idx, void *userdata)
+			  uint32_t idx, void *userdata)
 {
   fprintf (stderr, "Pulse I/O: callback context_subscribe.\n");
 
@@ -543,57 +625,33 @@ _pa_context_subscribe_cb (pa_context *c, pa_subscription_event_type_t t,
  */
 static int
 _pa_context_connect (pa_mainloop_api *my_pa_api,
-                     bfio_pulse_settings_t *settings)
+		     bfio_pulse_settings_t *settings)
 {
   pa_proplist *my_pa_ctx_proplist = pa_proplist_new ();
   settings->pa_ctx = pa_context_new_with_proplist (my_pa_api, "my context",
-                                                   my_pa_ctx_proplist);
+						   my_pa_ctx_proplist);
 
   pa_context_set_state_callback (settings->pa_ctx, _pa_context_state_cb,
-                                 settings);
+				 settings);
   pa_context_set_subscribe_callback (settings->pa_ctx, _pa_context_subscribe_cb,
-                                     settings);
+				     settings);
   pa_context_set_event_callback (settings->pa_ctx, _pa_context_event_cb,
-                                 settings);
+				 settings);
 
   pa_context_flags_t my_pa_context_flags = PA_CONTEXT_NOFLAGS;
 
-  pa_spawn_api *my_ctx_spawn_api = {};
+  pa_spawn_api *my_ctx_spawn_api =
+    { };
 
   if (pa_context_connect (settings->pa_ctx, settings->server,
-                          my_pa_context_flags, my_ctx_spawn_api) < 0)
-  {
-    fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
-             pa_context_errno (settings->pa_ctx));
-    return -1;
-  }
+			  my_pa_context_flags, my_ctx_spawn_api) < 0)
+    {
+      fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
+	       pa_context_errno (settings->pa_ctx));
+      return -1;
+    }
 
   return 0;
-}
-
-/**
- * Create appropriate buffer-attributes.
- */
-static pa_buffer_attr
-pa_buffer_attr_new (const int io, const int period_size)
-{
-  pa_buffer_attr buffer_attr = { .maxlength = period_size };
-
-  if (io == BF_IN)
-  {
-    // BF_IN is a PA recording-stream
-    buffer_attr.fragsize = period_size;
-  }
-
-  if (io == BF_OUT)
-  {
-    // BF_IN is a PA recording-stream
-    buffer_attr.tlength = -1;
-    buffer_attr.minreq = period_size;
-    buffer_attr.prebuf = -1;
-  }
-
-  return buffer_attr;
 }
 
 int
@@ -611,11 +669,30 @@ bfio_init (
     void *callback_state,
     int
     (*process_callback) (void **callback_states[2], int callback_state_count[2],
-                         void **buffers[2], int frame_count, int event))
+			 void **buffers[2], int frame_count, int event))
 {
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) params;
 
-  settings->buffer_attr = pa_buffer_attr_new (io, period_size);
+  // Set PA-buffer-attr if none configured
+  if (settings->buffer_attr == NULL)
+    {
+      settings->buffer_attr = malloc (sizeof(pa_buffer_attr));
+      memset (settings->buffer_attr, 0, sizeof(pa_buffer_attr));
+
+      if (io == BF_IN)
+	{
+	  settings->buffer_attr->fragsize = period_size;
+	}
+      else if (io == BF_OUT)
+	{
+	  settings->buffer_attr->tlength = period_size;
+	}
+      else
+	{
+	  fprintf (stderr, "Pulse I/O: Cannot determine stream-direction.\n");
+	  return -1;
+	}
+    }
 
   *device_period_size = 4096;
   *isinterleaved = true;
@@ -648,18 +725,18 @@ bfio_stop (int io)
   settings->dummypipe_fd = -1;
 
   if (pa_stream_disconnect (settings->pa_stream) != 0)
-  {
-    fprintf (stderr,
-             "Pulse I/O: error disconnecting playback-stream, code %d.\n",
-             pa_context_errno (settings->pa_ctx));
-  }
+    {
+      fprintf (stderr,
+	       "Pulse I/O: error disconnecting playback-stream, code %d.\n",
+	       pa_context_errno (settings->pa_ctx));
+    }
 
   if (pa_stream_disconnect (settings->pa_stream) != 0)
-  {
-    fprintf (stderr,
-             "Pulse I/O: error disconnecting recording-stream, code %d.\n",
-             pa_context_errno (settings->pa_ctx));
-  }
+    {
+      fprintf (stderr,
+	       "Pulse I/O: error disconnecting recording-stream, code %d.\n",
+	       pa_context_errno (settings->pa_ctx));
+    }
 
   pa_mainloop_free (settings->my_pa_mainloop);
 }
