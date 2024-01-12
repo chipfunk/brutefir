@@ -21,10 +21,10 @@
 #include "bfconf.h"
 #include "bit.h"
 
-#define GET_TOKEN(token, errstr)                                               \
-    if (get_config_token(&lexval) != token) {                                  \
-        fprintf(stderr, "Pulse I/O: Parse error: " errstr);                     \
-        return -1;                                                           \
+#define GET_TOKEN(token, errstr)                                   \
+    if (get_config_token(&lexval) != token) {                      \
+        fprintf(stderr, "Pulse I/O: Parse error: " errstr);        \
+        return -1;                                                 \
     }
 
 struct settings
@@ -38,7 +38,7 @@ struct settings
   char *stream_name;	// The stream-name as shown in PA
   char *device;		// Device-name to connect to, or NULL for default
   struct pa_sample_spec sample_spec;
-  struct pa_buffer_attr *buffer_attr;
+  struct pa_buffer_attr *buffer_attr;// MUST be pointer to allow for optional configuration
 };
 
 static struct settings *my_params[2];// Keep per in/out-stream, because ... fork()/threading?
@@ -366,7 +366,7 @@ bfio_init (
   my_params[io]->sample_spec.rate = sample_rate;
   my_params[io]->sample_spec.channels = open_channels;
 
-  // Set low-latency PA-buffer-attribs if none configured
+  // Set low-latency buffer-attribs if none configured
   if (my_params[io]->buffer_attr == NULL)
     {
       my_params[io]->buffer_attr = malloc (sizeof(pa_buffer_attr));
