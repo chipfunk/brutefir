@@ -21,20 +21,14 @@
 #include "bfconf.h"
 #include "bit.h"
 
-#define GET_TOKEN(token, errstr)                                               \
-    if (get_config_token(&lexval) != token) {                                  \
-        fprintf(stderr, "Pulse I/O: Parse error: " errstr);                     \
-        return -1;                                                           \
+#define GET_TOKEN(token, errstr)                                   \
+    if (get_config_token(&lexval) != token) {                      \
+        fprintf(stderr, "Pulse I/O: Parse error: " errstr);        \
+        return -1;                                                 \
     }
 
 struct settings
 {
-  // BruteFIR value
-  int io;
-  int sample_rate;
-  int open_channels;
-  int period_size;
-
   // Dummy-pipe value
   int dummypipe_fd;		// File-descriptor for dummy-pipe.
 
@@ -43,12 +37,14 @@ struct settings
   char *server;		// Name of server to connect to, NULL for default
   char *stream_name;	// The stream-name as shown in PA
   char *device;		// Device-name to connect to, or NULL for default
-  pa_sample_format_t sample_format;
-  pa_buffer_attr *buffer_attr;
+  struct pa_sample_spec sample_spec;
+  struct pa_buffer_attr *buffer_attr;// MUST be pointer to allow for optional configuration
 };
 
 static struct settings *my_params[2];// Keep per in/out-stream, because ... fork()/threading?
 static pa_simple *pa_handle[2];	// Keep per in/out-stream, because ... fork()/threading?
+
+bool_t debug = false;
 
 /**
  * Create a pipe to trap BruteFIR into thinking there is data-available.
@@ -112,10 +108,6 @@ init_settings (const int io, const int sample_rate, const int open_channels)
 {
   my_params[io] = malloc (sizeof(struct settings));
   memset (my_params[io], 0, sizeof(struct settings));
-
-  my_params[io]->io = io;
-  my_params[io]->sample_rate = sample_rate;
-  my_params[io]->open_channels = open_channels;
 
   my_params[io]->buffer_attr = NULL;
 }
@@ -222,6 +214,16 @@ parse_config_options (const int io, int
 
 	      parse_config_options_buffer_attr (io, my_params[io]->buffer_attr,
 						get_config_token);
+
+	      if (debug)
+		fprintf (
+		    stderr,
+		    "Pulse I/O: configure buffer attributes, maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
+		    my_params[io]->buffer_attr->maxlength,
+		    my_params[io]->buffer_attr->tlength,
+		    my_params[io]->buffer_attr->prebuf,
+		    my_params[io]->buffer_attr->minreq,
+		    my_params[io]->buffer_attr->fragsize);
 	    }
 	  else if (strcmp (lexval.field, "app_name") == 0)
 	    {
@@ -262,9 +264,9 @@ parse_config_options (const int io, int
  * @return PA sample-format to use, or PA_SAMPLE_INVALID if no sample-format could be found.
  */
 static const pa_sample_format_t
-detect_pa_sample_format (const int *bf_sample_format)
+detect_pa_sample_format (const int bf_sample_format)
 {
-  switch (*bf_sample_format)
+  switch (bf_sample_format)
     {
     case BF_SAMPLE_FORMAT_AUTO:
 #ifdef LITTLE_ENDIAN
@@ -308,6 +310,8 @@ bfio_preinit (int *version_major, int *version_minor, int
 	      int *uses_sample_clock, int *callback_sched_policy,
 	      struct sched_param *callback_sched_param, int _debug)
 {
+  debug = _debug;
+
   if (!check_version (version_major, version_minor))
     {
       fprintf (
@@ -322,14 +326,6 @@ bfio_preinit (int *version_major, int *version_minor, int
   if (parse_config_options (io, get_config_token) < 0)
     {
       fprintf (stderr, "Pulse I/O: Error parsing options.\n");
-      return NULL;
-    }
-
-  my_params[io]->sample_format = detect_pa_sample_format (sample_format);
-  if (my_params[io]->sample_format == PA_SAMPLE_INVALID)
-    {
-      fprintf (stderr,
-	       "Pulse I/O: Could not find appropriate sample-format for PA.\n");
       return NULL;
     }
 
@@ -358,7 +354,46 @@ bfio_init (
   *device_period_size = period_size;
   *isinterleaved = true;
 
-  my_params[io]->period_size = period_size;
+  pa_sample_format_t pa_sample_format = detect_pa_sample_format (sample_format);
+  if (pa_sample_format == PA_SAMPLE_INVALID)
+    {
+      fprintf (stderr,
+	       "Pulse I/O: Could not find appropriate sample-format for PA.\n");
+      return -1;
+    }
+
+  my_params[io]->sample_spec.format = pa_sample_format;
+  my_params[io]->sample_spec.rate = sample_rate;
+  my_params[io]->sample_spec.channels = open_channels;
+
+  // Set low-latency buffer-attribs if none configured
+  if (my_params[io]->buffer_attr == NULL)
+    {
+      my_params[io]->buffer_attr = malloc (sizeof(pa_buffer_attr));
+      memset (my_params[io]->buffer_attr, 0, sizeof(pa_buffer_attr));
+
+      my_params[io]->buffer_attr->maxlength = -1;
+      my_params[io]->buffer_attr->tlength = -1;
+      my_params[io]->buffer_attr->prebuf = -1;
+      my_params[io]->buffer_attr->minreq = -1;
+      my_params[io]->buffer_attr->fragsize = -1;
+
+      uint32_t nbytes = period_size
+	  * pa_sample_size (&my_params[io]->sample_spec);
+      if (io == BF_IN)
+	{
+	  my_params[io]->buffer_attr->fragsize = nbytes;
+	}
+      else if (io == BF_OUT)
+	{
+	  my_params[io]->buffer_attr->tlength = nbytes;
+	}
+      else
+	{
+	  fprintf (stderr, "Pulse I/O: Cannot determine stream-direction.\n");
+	  return -1;
+	}
+    }
 
   return create_dummypipe (io);
 }
@@ -367,16 +402,20 @@ static pa_simple*
 _pa_simple_open (const char *server, const char *app_name, const char *device,
 		 const char *stream_name,
 		 const pa_stream_direction_t stream_direction,
-		 const pa_sample_format_t sample_format, const int sample_rate,
-		 const int channels, const pa_channel_map *channel_map,
+		 const pa_sample_spec *sample_spec,
+		 const pa_channel_map *channel_map,
 		 const pa_buffer_attr *buffer_attr)
 {
-  const pa_sample_spec sample_spec =
-    { sample_format, sample_rate, channels };
+  if (debug)
+    fprintf (
+	stderr,
+	"Pulse I/O: buffer attributes, maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
+	buffer_attr->maxlength, buffer_attr->tlength, buffer_attr->prebuf,
+	buffer_attr->minreq, buffer_attr->fragsize);
 
   int errno = 0;
   pa_simple *handle = pa_simple_new (server, app_name, stream_direction, device,
-				     stream_name, &sample_spec, channel_map,
+				     stream_name, sample_spec, channel_map,
 				     buffer_attr, &errno);
 
   if (handle == NULL)
@@ -417,9 +456,7 @@ bfio_start (const int io)
 				   my_params[io]->app_name,
 				   my_params[io]->device,
 				   my_params[io]->stream_name, stream_direction,
-				   my_params[io]->sample_format,
-				   my_params[io]->sample_rate,
-				   my_params[io]->open_channels,
+				   &my_params[io]->sample_spec,
 				   NULL,
 				   my_params[io]->buffer_attr);
 
