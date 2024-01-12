@@ -360,6 +360,27 @@ bfio_init (
 
   my_params[io]->period_size = period_size;
 
+  // Set PA-buffer-attr if none configured
+  if (my_params[io]->buffer_attr == NULL)
+    {
+      my_params[io]->buffer_attr = malloc (sizeof(pa_buffer_attr));
+      memset (my_params[io]->buffer_attr, 0, sizeof(pa_buffer_attr));
+
+      if (io == BF_IN)
+	{
+	  my_params[io]->buffer_attr->fragsize = period_size;
+	}
+      else if (io == BF_OUT)
+	{
+	  my_params[io]->buffer_attr->tlength = period_size;
+	}
+      else
+	{
+	  fprintf (stderr, "Pulse I/O: Cannot determine stream-direction.\n");
+	  return -1;
+	}
+    }
+
   return create_dummypipe (io);
 }
 
