@@ -49,6 +49,8 @@ struct settings
 static struct settings *my_params[2];// Keep per in/out-stream, because ... fork()/threading?
 static pa_simple *pa_handle[2];	// Keep per in/out-stream, because ... fork()/threading?
 
+bool_t debug = false;
+
 /**
  * Create a pipe to trap BruteFIR into thinking there is data-available.
  *
@@ -221,6 +223,16 @@ parse_config_options (const int io, int
 
 	      parse_config_options_buffer_attr (io, my_params[io]->buffer_attr,
 						get_config_token);
+
+	      if (debug)
+		fprintf (
+		    stderr,
+		    "Pulse I/O: configure buffer attributes, maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
+		    my_params[io]->buffer_attr->maxlength,
+		    my_params[io]->buffer_attr->tlength,
+		    my_params[io]->buffer_attr->prebuf,
+		    my_params[io]->buffer_attr->minreq,
+		    my_params[io]->buffer_attr->fragsize);
 	    }
 	  else if (strcmp (lexval.field, "app_name") == 0)
 	    {
@@ -307,6 +319,8 @@ bfio_preinit (int *version_major, int *version_minor, int
 	      int *uses_sample_clock, int *callback_sched_policy,
 	      struct sched_param *callback_sched_param, int _debug)
 {
+  debug = _debug;
+
   if (!check_version (version_major, version_minor))
     {
       fprintf (
@@ -361,15 +375,20 @@ bfio_init (
   my_params[io]->sample_spec.rate = sample_rate;
   my_params[io]->sample_spec.channels = open_channels;
 
-  // Set PA-buffer-attr if none configured
+  // Set low-latency PA-buffer-attribs if none configured
   if (my_params[io]->buffer_attr == NULL)
     {
       my_params[io]->buffer_attr = malloc (sizeof(pa_buffer_attr));
       memset (my_params[io]->buffer_attr, 0, sizeof(pa_buffer_attr));
 
+      my_params[io]->buffer_attr->maxlength = -1;
+      my_params[io]->buffer_attr->tlength = -1;
+      my_params[io]->buffer_attr->prebuf = -1;
+      my_params[io]->buffer_attr->minreq = -1;
+      my_params[io]->buffer_attr->fragsize = -1;
+
       uint32_t nbytes = period_size
 	  * pa_sample_size (&my_params[io]->sample_spec);
-
       if (io == BF_IN)
 	{
 	  my_params[io]->buffer_attr->fragsize = nbytes;
@@ -396,6 +415,13 @@ _pa_simple_open (const char *server, const char *app_name, const char *device,
 		 const pa_channel_map *channel_map,
 		 const pa_buffer_attr *buffer_attr)
 {
+  if (debug)
+    fprintf (
+	stderr,
+	"Pulse I/O: buffer attributes, maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
+	buffer_attr->maxlength, buffer_attr->tlength, buffer_attr->prebuf,
+	buffer_attr->minreq, buffer_attr->fragsize);
+
   int errno = 0;
   pa_simple *handle = pa_simple_new (server, app_name, stream_direction, device,
 				     stream_name, sample_spec, channel_map,
@@ -441,7 +467,7 @@ bfio_start (const int io)
 				   my_params[io]->stream_name, stream_direction,
 				   &my_params[io]->sample_spec,
 				   NULL,
-				   &my_params[io]->buffer_attr);
+				   my_params[io]->buffer_attr);
 
   if (pa_handle[io] == NULL)
     {
