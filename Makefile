@@ -10,7 +10,7 @@ INSTALL_PREFIX	= $(DESTDIR)/usr/local
 ###################################
 # Where to find libraries, and their header files.
 LIBPATHS	= -L/usr/local/lib
-INCLUDE		= -I/usr/local/include
+INCLUDE		= -I/usr/local/include  -I/usr/lib/pipewire-0.3
 ifdef FFTW_PATH
 LIBPATHS	+= -L$(FFTW_PATH)/lib
 INCLUDE		+= -I$(FFTW_PATH)/include
@@ -54,6 +54,9 @@ BFIO_OSS_OBJS	= bfio_oss.fpic.o emalloc.fpic.o
 BFIO_JACK_LIBS	= -ljack
 BFIO_JACK_OBJS	= bfio_jack.fpic.o emalloc.fpic.o inout.fpic.o
 
+BFIO_PIPEWIRE_LIBS	= -lpipewire
+BFIO_PIPEWIRE_OBJS	= bfio_pipewire.fpic.o emalloc.fpic.o inout.fpic.o
+
 BFLOGIC_CLI_OBJS = bflogic_cli.fpic.o inout.fpic.o
 BFLOGIC_EQ_OBJS	= bflogic_eq.fpic.o emalloc.fpic.o shmalloc.fpic.o
 
@@ -90,9 +93,11 @@ LDMULTIPLEDEFS	= -Xlinker --allow-multiple-definition
 ifeq ($(UNAME),Linux)
 LIB_TARGETS	+= alsa.bfio
 endif
-LIB_TARGETS	+= oss.bfio
-LIB_TARGETS	+= jack.bfio
+#LIB_TARGETS	+= oss.bfio
+#LIB_TARGETS	+= jack.bfio
 endif
+
+LIB_TARGETS	+= pipewire.bfio
 
 # FreeBSD
 ifeq ($(UNAME),FreeBSD)
@@ -138,6 +143,10 @@ jack.bfio: $(BFIO_JACK_OBJS)
 	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_JACK_OBJS) $(BFIO_JACK_LIBS) -lc
 	$(CHMOD) $(CHMOD_REMOVEX) $@
 
+pipewire.bfio: $(BFIO_PIPEWIRE_OBJS)
+	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_PIPEWIRE_OBJS) $(BFIO_PIPEWIRE_LIBS) -lc
+	$(CHMOD) $(CHMOD_REMOVEX) $@
+
 file.bfio: $(BFIO_FILE_OBJS)
 	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_FILE_OBJS) -lc
 	$(CHMOD) $(CHMOD_REMOVEX) $@
@@ -158,4 +167,4 @@ install: $(BIN_TARGETS) $(LIB_TARGETS)
 clean:
 	rm -f *.core core bfconf_lexical.c $(BRUTEFIR_OBJS) $(BFIO_FILE_OBJS)  \
 $(BFLOGIC_CLI_OBJS) $(BFLOGIC_EQ_OBJS) $(BFIO_ALSA_OBJS) $(BFIO_OSS_OBJS) \
-$(BFIO_JACK_OBJS) $(TARGETS)
+$(BFIO_JACK_OBJS) $(BFIO_PIPEWIRE_OBJS) $(TARGETS)
