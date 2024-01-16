@@ -4,6 +4,7 @@
  * This program is open source. For license terms, see the LICENSE file.
  *
  */
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
