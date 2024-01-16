@@ -7,11 +7,12 @@
  *
  */
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 
-#include <pipewire-0.3/pipewire/pipewire.h>
-#include <pipewire-0.3/pipewire/stream.h>
+#include <pipewire/pipewire.h>
+#include <spa/support/plugin.h>
 
 #define IS_BFIO_MODULE
 #include "bfmod.h"
@@ -23,11 +24,17 @@
         return -1;                                                 \
     }
 
-typedef struct settings {
-  struct pw_main_loop *pw_main_loop;
+typedef struct
+{
+  struct pw_loop *pw_main_loop;
   struct pw_context *pw_context;
   struct pw_core *pw_core;
+  struct pw_stream *pw_stream;
 } settings_t;
+
+settings_t *my_params;
+
+bool debug = false;
 
 void*
 bfio_preinit (int *version_major, int *version_minor, int
@@ -36,7 +43,17 @@ bfio_preinit (int *version_major, int *version_minor, int
 	      int *uses_sample_clock, int *callback_sched_policy,
 	      struct sched_param *callback_sched, int _debug)
 {
+  debug = _debug;
 
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::preinit, %d\n", io);
+
+  pw_init (NULL, NULL);
+
+  settings_t *settings = malloc (sizeof(settings_t));
+  memset (settings, 0, sizeof(settings_t));
+
+  return settings;
 }
 
 int
@@ -56,35 +73,65 @@ bfio_init (
     (*process_callback) (void **callback_states[2], int callback_state_count[2],
 			 void **buffers[2], int frame_count, int event))
 {
-  const struct spa_dict *props = NULL;
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::init, %d, %p\n", io, params);
 
-  struct pw_loop *pw_main_loop = pw_loop_new(props);
+  my_params = params;
 
-  struct pw_context *pw_context = pw_context_new(struct pw_loop *main_loop, struct pw_properties *props, size_t user_data_size);
+  const struct spa_dict *loop_props =
+    { 0, };
 
-  struct pw_properties *props = pw_properties_new();
+  my_params->pw_main_loop = pw_loop_new (loop_props);
 
-  struct pw_core *pw_core = pw_context_connect();
+  struct pw_properties *context_props = NULL;
 
-  struct pw_stream*
-  pw_stream_new (struct pw_core *core, const char *name,
-		 struct pw_properties *props);
+  size_t user_data_size = 0;
+
+  my_params->pw_context = pw_context_new (my_params->pw_main_loop, context_props,
+						  user_data_size);
+
+  struct pw_properties *core_props = NULL;
+
+  my_params->pw_core = pw_context_connect (my_params->pw_context, core_props,
+					     user_data_size);
+  if (my_params->pw_core == NULL)
+    {
+      fprintf (stderr, "Pipewire I/O::init can NOT connect context\n");
+      return -1;
+    }
+
+  struct pw_properties *stream_props = NULL;
+
+  const char *stream_name = "Steam name";
+
+  my_params->pw_stream = pw_stream_new (my_params->pw_core, stream_name, stream_props);
+
+  return 0;
 }
 
 int
 bfio_start (int io)
 {
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::start, %d, %p\n", io, my_params);
+
   return 0;
 }
 
 void
 bfio_stop (int io)
 {
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::stop, %d, %p\n", io, my_params);
+
 }
 
 int
 bfio_read (int fd, void *buf, int offset, int count)
 {
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::read, %d\n", fd);
+
   return 0;
 
 }
@@ -92,6 +139,9 @@ bfio_read (int fd, void *buf, int offset, int count)
 int
 bfio_write (int fd, const void *buf, int offset, int count)
 {
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::write, %d\n", fd);
+
   return 0;
 
 }

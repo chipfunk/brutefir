@@ -7,10 +7,15 @@ LDFLAGS +=
 # Where to install
 INSTALL_PREFIX	= $(DESTDIR)/usr/local
 
+PIPEWIRE_INCLUDES = /usr/include/pipewire-0.3
+SPA_INCLUDES = /usr/include/spa-0.2
+PIPEWIRE_LIBS = -llibpipewire-0.3
+
 ###################################
 # Where to find libraries, and their header files.
 LIBPATHS	= -L/usr/local/lib
-INCLUDE		= -I/usr/local/include  -I/usr/lib/pipewire-0.3
+INCLUDE		= -I/usr/local/include
+INCLUDE		+= `pkg-config --cflags-only-I libpipewire-0.3`
 ifdef FFTW_PATH
 LIBPATHS	+= -L$(FFTW_PATH)/lib
 INCLUDE		+= -I$(FFTW_PATH)/include
@@ -54,7 +59,7 @@ BFIO_OSS_OBJS	= bfio_oss.fpic.o emalloc.fpic.o
 BFIO_JACK_LIBS	= -ljack
 BFIO_JACK_OBJS	= bfio_jack.fpic.o emalloc.fpic.o inout.fpic.o
 
-BFIO_PIPEWIRE_LIBS	= -lpipewire
+BFIO_PIPEWIRE_LIBS	= -lpipewire-0.3
 BFIO_PIPEWIRE_OBJS	= bfio_pipewire.fpic.o emalloc.fpic.o inout.fpic.o
 
 BFLOGIC_CLI_OBJS = bflogic_cli.fpic.o inout.fpic.o
