@@ -11,8 +11,6 @@
 
 #include "sysarch.h"
 
-#define true ((bool_t)1)
-#define false ((bool_t)0)
 typedef int bool_t;
 
 typedef uint64_t ull_t;
