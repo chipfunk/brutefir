@@ -117,7 +117,7 @@ detect_pw_sample_format (const int bf_sample_format)
 #ifdef LITTLE_ENDIAN
       return SPA_AUDIO_FORMAT_F32_LE;
 #else if BIG_ENDIAN
-      return SPA_AUDIO_FORMAT_F32_LE;
+      return SPA_AUDIO_FORMAT_F32_BE;
 #endif
     case BF_SAMPLE_FORMAT_S8:
       return SPA_AUDIO_FORMAT_U8;
