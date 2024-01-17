@@ -231,14 +231,16 @@ _pw_registry_global_cb (void *data, uint32_t id, uint32_t permissions,
 			const struct spa_dict *props)
 {
   if (debug)
-    fprintf (
-	stderr,
-	"PipeWire I/O::_pw_registry_global_cb, object: id:%u type:%s/%d.\n", id,
-	type, version);
+    {
+      fprintf (
+	  stderr,
+	  "PipeWire I/O::_pw_registry_global_cb, object: id:%u type:%s/%d.\n",
+	  id, type, version);
 
-  const struct spa_dict_item *item;
-  spa_dict_for_each(item, props)
-    printf ("\t\t%s: \"%s\"\n", item->key, item->value);
+      const struct spa_dict_item *item;
+      spa_dict_for_each(item, props)
+	printf ("\t\t%s: \"%s\"\n", item->key, item->value);
+    }
 }
 
 static void
