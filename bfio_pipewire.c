@@ -224,7 +224,7 @@ parse_config_options (const int io, settings_t *settings, int
 }
 
 static void
-_cb_registry_event_global (void *data, uint32_t id, uint32_t permissions,
+_pw_registry_global_cb (void *data, uint32_t id, uint32_t permissions,
 			   const char *type, uint32_t version,
 			   const struct spa_dict *props)
 {
@@ -239,7 +239,7 @@ _cb_registry_event_global (void *data, uint32_t id, uint32_t permissions,
 }
 
 static void
-_cb_registry_global_remove (void *data, uint32_t id)
+_pw_registry_global_remove_cb (void *data, uint32_t id)
 {
   if (debug)
     fprintf (stderr, "Pipewire I/O::registry_event_global_remove\n");
@@ -248,47 +248,54 @@ _cb_registry_global_remove (void *data, uint32_t id)
 }
 
 static const struct pw_registry_events registry_events =
-  { PW_VERSION_REGISTRY_EVENTS, .global = _cb_registry_event_global,
-      .global_remove = _cb_registry_global_remove, };
+  { PW_VERSION_REGISTRY_EVENTS, .global = _pw_registry_global_cb,
+      .global_remove = _pw_registry_global_remove_cb, };
 
 static void
-_cb_filter_command (void *data, const struct spa_command *command)
+_pw_filter_command_cb (void *data, const struct spa_command *command)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::_cb_filter_command\n");
+    fprintf (stderr, "Pipewire I/O::_cb_filter_command, %s.\n", command->body);
+
+  settings_t *settings = data;
+
 }
 
 static void
-_cb_filter_drained (void *data)
+_pw_filter_drained_cb (void *data)
 {
   if (debug)
     fprintf (stderr, "Pipewire I/O::_pw_filter_drained\n");
+
+  settings_t *settings = data;
+
 }
 
 static void
-_cb_filter_destroy (void *data)
+_pw_filter_destroy_cb (void *data)
 {
   if (debug)
     fprintf (stderr, "Pipewire I/O::_pw_filter_destroy\n");
+
+  settings_t *settings = data;
+
 }
 
 /**
  * Event handler to process filter
  */
 static void
-_cb_filter_process (void *data, struct spa_io_position *position)
+_pw_filter_process_cb (void *data, struct spa_io_position *position)
 {
-  struct data *data = userdata;
+  settings_t *settings = data;
+
   float *out;
-  struct port *out_port = data->out_port;
   uint32_t i, n_samples = position->clock.duration;
 
   if (debug)
     fprintf (stderr, "Pipewire I/O::_pw_filter_process\n");
 
-  settings_t *settings = data;
-
-  out = pw_filter_get_dsp_buffer (out_port, n_samples);
+  out = pw_filter_get_dsp_buffer (settings->pw_port, n_samples);
   if (out == NULL)
     return;
 
@@ -304,37 +311,37 @@ _cb_filter_process (void *data, struct spa_io_position *position)
 }
 
 static void
-_cb_filter_add_buffer (void *data, void *port_data, struct pw_buffer *buffer)
+_pw_filter_add_buffer_cb (void *data, void *port_data, struct pw_buffer *buffer)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::_pw_filter_add_buffer\n");
+    fprintf (stderr, "Pipewire I/O::_cb_filter_add_buffer\n");
 }
 
 static void
-_cb_filter_remove_buffer (void *data, void *port_data, struct pw_buffer *buffer)
+_pw_filter_remove_buffer_cb (void *data, void *port_data, struct pw_buffer *buffer)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::_pw_filter_remove_buffer\n");
+    fprintf (stderr, "Pipewire I/O::_cb_filter_remove_buffer\n");
 }
 
 static void
-_cb_filter_io_changed (void *data, void *port_data, uint32_t id, void *area,
+_pw_filter_io_changed_cb (void *data, void *port_data, uint32_t id, void *area,
 		       uint32_t size)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::_pw_filter_io_changed\n");
+    fprintf (stderr, "Pipewire I/O::_cb_filter_io_changed, %d.\n", id);
 }
 
 static void
-_cb_filter_param_changed (void *data, void *port_data, uint32_t id,
+_pw_filter_param_changed_cb (void *data, void *port_data, uint32_t id,
 			  const struct spa_pod *param)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::_pw_filter_param_changed\n");
+    fprintf (stderr, "Pipewire I/O::_cb_filter_param_changed, %d.\n", id);
 }
 
 static void
-_cb_filter_state_changed (void *data, enum pw_filter_state old,
+_pw_filter_state_changed_cb (void *data, enum pw_filter_state old,
 			  enum pw_filter_state state, const char *error)
 {
   if (debug)
@@ -357,12 +364,32 @@ _cb_filter_state_changed (void *data, enum pw_filter_state old,
 }
 
 static const struct pw_filter_events filter_events =
-  { PW_VERSION_FILTER_EVENTS, .process = _cb_filter_process, .add_buffer =
-      _cb_filter_add_buffer, .command = _cb_filter_command, .destroy =
-      _cb_filter_destroy, .drained = _cb_filter_drained, .io_changed =
-      _cb_filter_io_changed, .param_changed = _cb_filter_param_changed,
-      .remove_buffer = _cb_filter_remove_buffer, .state_changed =
-	  _cb_filter_state_changed, };
+  { PW_VERSION_FILTER_EVENTS, .process = _pw_filter_process_cb, .add_buffer =
+      _pw_filter_add_buffer_cb, .command = _pw_filter_command_cb, .destroy =
+      _pw_filter_destroy_cb, .drained = _pw_filter_drained_cb, .io_changed =
+      _pw_filter_io_changed_cb, .param_changed = _pw_filter_param_changed_cb,
+      .remove_buffer = _pw_filter_remove_buffer_cb, .state_changed =
+	  _pw_filter_state_changed_cb, };
+
+static void _pw_port_info_cb(void *data, const struct pw_port_info *info) {
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_port_info_cb.\n");
+
+
+}
+
+static void _pw_port_param_cb(void *data, int seq,
+			       uint32_t id, uint32_t index, uint32_t next,
+			       const struct spa_pod *param) {
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_port_param_cb, id: %d\n", id);
+
+
+}
+
+static const struct pw_port_events port_events = {
+    PW_VERSION_PORT_EVENTS, .info = _pw_port_info_cb, .param = _pw_port_param_cb,
+};
 
 void*
 bfio_preinit (int *version_major, int *version_minor, int
@@ -398,21 +425,6 @@ bfio_preinit (int *version_major, int *version_minor, int
 
   return settings;
 }
-
-struct data;
-
-struct data
-{
-  struct pw_main_loop *loop;
-  struct pw_filter *filter;
-  struct port *in_port;
-  struct port *out_port;
-};
-
-struct port
-{
-  struct data *data;
-};
 
 int
 bfio_init (
@@ -492,8 +504,6 @@ bfio_init (
   pw_filter_add_listener (my_params->pw_filter, &my_params->pw_filter_listener,
 			  &filter_events, NULL);
 
-  struct data data =
-    { 0, };
   const struct spa_pod *pw_params[1];
   uint8_t buffer[1024];
   struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
@@ -504,7 +514,7 @@ bfio_init (
       my_params->pw_port = pw_filter_add_port (
 	  my_params->pw_filter,
 	  PW_DIRECTION_INPUT,
-	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(struct port),
+	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(settings_t),
 	  pw_properties_new (
 	  PW_KEY_FORMAT_DSP,
 			     "32 bit float mono audio",
@@ -519,7 +529,7 @@ bfio_init (
       my_params->pw_port = pw_filter_add_port (
 	  my_params->pw_filter,
 	  PW_DIRECTION_OUTPUT,
-	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(struct port),
+	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(settings_t),
 	  pw_properties_new (
 	  PW_KEY_FORMAT_DSP,
 			     "32 bit float mono audio",
@@ -535,10 +545,15 @@ bfio_init (
       return -1;
     }
 
+  spa_zero(my_params->pw_port_listener);
+  pw_port_add_listener(my_params->pw_port, &my_params->pw_port_listener,
+			  &port_events, NULL);
+
   /* Now connect this filter. We ask that our process function is
    * called in a realtime thread. */
   if (pw_filter_connect (my_params->pw_filter, PW_FILTER_FLAG_RT_PROCESS,
-			 NULL, 0) < 0)
+  NULL,
+			 0) < 0)
     {
       fprintf (stderr, "can't connect\n");
       return -1;
@@ -563,6 +578,9 @@ bfio_stop (int io)
 {
   if (debug)
     fprintf (stderr, "Pipewire I/O::stop, %d, %p\n", io, my_params);
+
+  pw_filter_disconnect(my_params->pw_filter);
+  pw_filter_destroy(my_params->pw_filter);
 
   pw_core_disconnect (my_params->pw_core);
   pw_context_destroy (my_params->pw_context);
