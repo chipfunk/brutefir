@@ -11,7 +11,13 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <spa/pod/builder.h>
+#include <spa/param/latency-utils.h>
+
 #include <pipewire/pipewire.h>
+#include <pipewire/core.h>
+#include <pipewire/filter.h>
+#include <pipewire/main-loop.h>
 #include <spa/param/audio/format.h>
 
 #define IS_BFIO_MODULE
@@ -20,7 +26,7 @@
 
 #define GET_TOKEN(token, errstr)                                   \
     if (get_config_token(&lexval) != token) {                      \
-        fprintf(stderr, "Pulse I/O: Parse error: " errstr);        \
+        fprintf(stderr, "Pipewire I/O: Parse error: " errstr);     \
         return -1;                                                 \
     }
 
@@ -33,10 +39,19 @@ typedef struct
   char *app_name;
   char *stream_name;
 
-  struct pw_loop *pw_main_loop;
+  struct pw_main_loop *pw_main_loop;
   struct pw_context *pw_context;
   struct pw_core *pw_core;
-  struct pw_stream *pw_stream;
+
+  struct pw_registry *pw_registry;
+  struct spa_hook pw_registry_listener;
+
+  struct pw_filter *pw_filter;
+  struct spa_hook pw_filter_listener;
+
+  struct pw_port *pw_port;
+  struct spa_hook pw_port_listener;
+
 } settings_t;
 
 settings_t *my_params;
@@ -79,7 +94,7 @@ create_dummypipe (const int io)
   int dummypipe[2];
   if (pipe (dummypipe) == -1)
     {
-      fprintf (stderr, "Pulse I/O: Could not create pipe.\n");
+      fprintf (stderr, "Pipewire I/O: Could not create pipe.\n");
       return -1;
     }
 
@@ -95,9 +110,12 @@ create_dummypipe (const int io)
     }
   else
     {
-      fprintf (stderr, "Pulse I/O: Invalid IO direction.\n");
+      fprintf (stderr, "Pipewire I/O: Invalid IO direction.\n");
       return -1;
     }
+
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::dummypipe, %d\n", dummypipe_fd);
 
   return dummypipe_fd;
 }
@@ -205,6 +223,147 @@ parse_config_options (const int io, settings_t *settings, int
   return 0;
 }
 
+static void
+_cb_registry_event_global (void *data, uint32_t id, uint32_t permissions,
+			   const char *type, uint32_t version,
+			   const struct spa_dict *props)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::registry_event_global\n");
+
+  printf ("object: id:%u type:%s/%d\n", id, type, version);
+
+  const struct spa_dict_item *item;
+  spa_dict_for_each(item, props)
+    printf ("\t\t%s: \"%s\"\n", item->key, item->value);
+}
+
+static void
+_cb_registry_global_remove (void *data, uint32_t id)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::registry_event_global_remove\n");
+
+  printf ("object remove: %d\n", id);
+}
+
+static const struct pw_registry_events registry_events =
+  { PW_VERSION_REGISTRY_EVENTS, .global = _cb_registry_event_global,
+      .global_remove = _cb_registry_global_remove, };
+
+static void
+_cb_filter_command (void *data, const struct spa_command *command)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_cb_filter_command\n");
+}
+
+static void
+_cb_filter_drained (void *data)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_drained\n");
+}
+
+static void
+_cb_filter_destroy (void *data)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_destroy\n");
+}
+
+/**
+ * Event handler to process filter
+ */
+static void
+_cb_filter_process (void *data, struct spa_io_position *position)
+{
+  struct data *data = userdata;
+  float *out;
+  struct port *out_port = data->out_port;
+  uint32_t i, n_samples = position->clock.duration;
+
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_process\n");
+
+  settings_t *settings = data;
+
+  out = pw_filter_get_dsp_buffer (out_port, n_samples);
+  if (out == NULL)
+    return;
+
+//  struct pw_buffer *buffer;
+//  if ((buffer = pw_filter_dequeue_buffer (settings->pw_filter)) == NULL)
+//    {
+//      fprintf (stderr,
+//	       "Pipewire I/O::on_filter_process can NOT dequeue buffer\n");
+//      return;
+//    }
+//
+//  pw_filter_queue_buffer (settings->pw_filter, buffer);
+}
+
+static void
+_cb_filter_add_buffer (void *data, void *port_data, struct pw_buffer *buffer)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_add_buffer\n");
+}
+
+static void
+_cb_filter_remove_buffer (void *data, void *port_data, struct pw_buffer *buffer)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_remove_buffer\n");
+}
+
+static void
+_cb_filter_io_changed (void *data, void *port_data, uint32_t id, void *area,
+		       uint32_t size)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_io_changed\n");
+}
+
+static void
+_cb_filter_param_changed (void *data, void *port_data, uint32_t id,
+			  const struct spa_pod *param)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_param_changed\n");
+}
+
+static void
+_cb_filter_state_changed (void *data, enum pw_filter_state old,
+			  enum pw_filter_state state, const char *error)
+{
+  if (debug)
+    fprintf (stderr, "Pipewire I/O::_pw_filter_state_changed, %s\n",
+	     pw_filter_state_as_string (state));
+
+  switch (state)
+    {
+    case PW_FILTER_STATE_ERROR:
+      break;
+    case PW_FILTER_STATE_UNCONNECTED:
+      break;
+    case PW_FILTER_STATE_CONNECTING:
+      break;
+    case PW_FILTER_STATE_PAUSED:
+      break;
+    case PW_FILTER_STATE_STREAMING:
+      break;
+    }
+}
+
+static const struct pw_filter_events filter_events =
+  { PW_VERSION_FILTER_EVENTS, .process = _cb_filter_process, .add_buffer =
+      _cb_filter_add_buffer, .command = _cb_filter_command, .destroy =
+      _cb_filter_destroy, .drained = _cb_filter_drained, .io_changed =
+      _cb_filter_io_changed, .param_changed = _cb_filter_param_changed,
+      .remove_buffer = _cb_filter_remove_buffer, .state_changed =
+	  _cb_filter_state_changed, };
+
 void*
 bfio_preinit (int *version_major, int *version_minor, int
 (*get_config_token) (union bflexval *lexval),
@@ -221,7 +380,7 @@ bfio_preinit (int *version_major, int *version_minor, int
     {
       fprintf (
 	  stderr,
-	  "Pulse I/O: Mismatching version-numbers. Expected BF_VERSION_MAJOR.BF_VERSION_MINOR, got %d.%d.\n",
+	  "Pipewire I/O: Mismatching version-numbers. Expected BF_VERSION_MAJOR.BF_VERSION_MINOR, got %d.%d.\n",
 	  *version_major, *version_minor);
       return NULL;
     }
@@ -231,7 +390,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 
   if (parse_config_options (io, settings, get_config_token) < 0)
     {
-      fprintf (stderr, "Pulse I/O: Error parsing options.\n");
+      fprintf (stderr, "Pipewire I/O: Error parsing options.\n");
       return NULL;
     }
 
@@ -239,6 +398,21 @@ bfio_preinit (int *version_major, int *version_minor, int
 
   return settings;
 }
+
+struct data;
+
+struct data
+{
+  struct pw_main_loop *loop;
+  struct pw_filter *filter;
+  struct port *in_port;
+  struct port *out_port;
+};
+
+struct port
+{
+  struct data *data;
+};
 
 int
 bfio_init (
@@ -262,31 +436,34 @@ bfio_init (
 
   my_params = params;
 
-  my_params->dummypipe_fd = create_dummypipe(io);
-  if(my_params->dummypipe_fd < 0) {
-      fprintf (stderr, "Pulse I/O: Error creating dummy-pipe.\n");
+  my_params->dummypipe_fd = create_dummypipe (io);
+  if (my_params->dummypipe_fd < 0)
+    {
+      fprintf (stderr, "Pipewire I/O: Error creating dummy-pipe.\n");
       return -1;
-  }
+    }
 
-  enum spa_audio_format audio_format = detect_pw_sample_format(sample_format);
-  if(audio_format == SPA_AUDIO_FORMAT_UNKNOWN) {
-      fprintf (stderr, "Pulse I/O: Error detecting audio-format.\n");
+  enum spa_audio_format audio_format = detect_pw_sample_format (sample_format);
+  if (audio_format == SPA_AUDIO_FORMAT_UNKNOWN)
+    {
+      fprintf (stderr, "Pipewire I/O: Error detecting audio-format.\n");
       return -1;
-  }
+    }
 
   pw_init (NULL, NULL);
 
   const struct spa_dict *loop_props =
     { 0, };
 
-  my_params->pw_main_loop = pw_loop_new (loop_props);
+  my_params->pw_main_loop = pw_main_loop_new (loop_props);
 
   struct pw_properties *context_props = NULL;
 
   size_t user_data_size = 0;
 
-  my_params->pw_context = pw_context_new (my_params->pw_main_loop,
-					  context_props, user_data_size);
+  my_params->pw_context = pw_context_new (
+      pw_main_loop_get_loop (my_params->pw_main_loop), context_props,
+      user_data_size);
 
   struct pw_properties *core_props = NULL;
 
@@ -298,12 +475,74 @@ bfio_init (
       return -1;
     }
 
-  struct pw_properties *stream_props = NULL;
+  my_params->pw_registry = pw_core_get_registry (my_params->pw_core,
+  PW_VERSION_REGISTRY,
+						 user_data_size);
 
-  const char *stream_name = "Steam name";
+  spa_zero(my_params->pw_registry_listener);
+  pw_registry_add_listener(my_params->pw_registry,
+			   &my_params->pw_registry_listener, &registry_events,
+			   NULL);
 
-  my_params->pw_stream = pw_stream_new (my_params->pw_core, stream_name,
-					stream_props);
+  struct pw_properties *filter_props = NULL;
+  my_params->pw_filter = pw_filter_new (my_params->pw_core, "Filter name",
+					filter_props);
+
+  spa_zero(my_params->pw_filter_listener);
+  pw_filter_add_listener (my_params->pw_filter, &my_params->pw_filter_listener,
+			  &filter_events, NULL);
+
+  struct data data =
+    { 0, };
+  const struct spa_pod *pw_params[1];
+  uint8_t buffer[1024];
+  struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+
+  if (io == BF_IN)
+    {
+      /* make an audio DSP input port */
+      my_params->pw_port = pw_filter_add_port (
+	  my_params->pw_filter,
+	  PW_DIRECTION_INPUT,
+	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(struct port),
+	  pw_properties_new (
+	  PW_KEY_FORMAT_DSP,
+			     "32 bit float mono audio",
+			     PW_KEY_PORT_NAME,
+			     "input",
+			     NULL),
+	  NULL, 0);
+    }
+  else if (io == BF_OUT)
+    {
+      /* make an audio DSP output port */
+      my_params->pw_port = pw_filter_add_port (
+	  my_params->pw_filter,
+	  PW_DIRECTION_OUTPUT,
+	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(struct port),
+	  pw_properties_new (
+	  PW_KEY_FORMAT_DSP,
+			     "32 bit float mono audio",
+			     PW_KEY_PORT_NAME,
+			     "output",
+			     NULL),
+	  NULL, 0);
+    }
+  else
+    {
+      fprintf (stderr,
+	       "Pipewire I/O::init can NO determine stream direction.\n");
+      return -1;
+    }
+
+  /* Now connect this filter. We ask that our process function is
+   * called in a realtime thread. */
+  if (pw_filter_connect (my_params->pw_filter, PW_FILTER_FLAG_RT_PROCESS,
+			 NULL, 0) < 0)
+    {
+      fprintf (stderr, "can't connect\n");
+      return -1;
+    }
 
   return my_params->dummypipe_fd;
 }
@@ -314,6 +553,8 @@ bfio_start (int io)
   if (debug)
     fprintf (stderr, "Pipewire I/O::start, %d, %p\n", io, my_params);
 
+  pw_main_loop_run (my_params->pw_main_loop);
+
   return 0;
 }
 
@@ -323,15 +564,23 @@ bfio_stop (int io)
   if (debug)
     fprintf (stderr, "Pipewire I/O::stop, %d, %p\n", io, my_params);
 
+  pw_core_disconnect (my_params->pw_core);
+  pw_context_destroy (my_params->pw_context);
+  pw_main_loop_destroy (my_params->pw_main_loop);
+
+  pw_deinit ();
+
+  close (my_params->dummypipe_fd);
 }
 
 int
 bfio_read (int fd, void *buf, int offset, int count)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::read, %d\n", fd);
+    fprintf (stderr, "Pipewire I/O::read, %d, %p, %d, %d\n", fd, buf, offset,
+	     count);
 
-  return 0;
+  return count;
 
 }
 
@@ -339,9 +588,10 @@ int
 bfio_write (int fd, const void *buf, int offset, int count)
 {
   if (debug)
-    fprintf (stderr, "Pipewire I/O::write, %d\n", fd);
+    fprintf (stderr, "Pipewire I/O::write, %d, %p, %d, %d\n", fd, buf, offset,
+	     count);
 
-  return 0;
+  return count;
 
 }
 
