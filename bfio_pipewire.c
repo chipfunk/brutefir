@@ -237,9 +237,9 @@ _pw_registry_global_cb (void *data, uint32_t id, uint32_t permissions,
 	  "PipeWire I/O::_pw_registry_global_cb, object: id:%u type:%s/%d.\n",
 	  id, type, version);
 
-      const struct spa_dict_item *item;
-      spa_dict_for_each(item, props)
-	printf ("\t\t%s: \"%s\"\n", item->key, item->value);
+//      const struct spa_dict_item *item;
+//      spa_dict_for_each(item, props)
+//	printf ("\t\t%s: \"%s\"\n", item->key, item->value);
     }
 }
 
@@ -402,7 +402,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 	      int *uses_sample_clock, int *callback_sched_policy,
 	      struct sched_param *callback_sched, int _debug)
 {
-  debug = _debug;
+  debug = true;
 
   if (debug)
     fprintf (stderr, "PipeWire I/O::preinit, %d\n", io);
@@ -431,7 +431,7 @@ bfio_preinit (int *version_major, int *version_minor, int
 }
 
 static int
-setup_pw_context (int io)
+setup_pw_context (const int io)
 {
   struct pw_properties *context_props = NULL;
 
@@ -464,9 +464,20 @@ setup_pw_context (int io)
 }
 
 static int
-setup_pw_filter (int io)
+setup_pw_filter (const int io, const char *device_name)
 {
-  struct pw_properties *filter_props = NULL;
+  struct pw_properties *filter_props = pw_properties_new (
+      PW_KEY_MEDIA_TYPE, "Audio",
+      PW_KEY_MEDIA_CATEGORY,
+      "Filter",
+      PW_KEY_MEDIA_ROLE,
+      "DSP",
+      PW_KEY_AUDIO_CHANNELS,
+      "2",
+      PW_KEY_TARGET_OBJECT,
+      device_name,
+      NULL);
+
   my_params[io]->pw_filter = pw_filter_new (my_params[io]->pw_core,
 					    "Filter name", filter_props);
 
@@ -479,19 +490,22 @@ setup_pw_filter (int io)
 }
 
 static int
-setup_pw_port (int io)
+setup_pw_port (const int io, const char *stream_name)
 {
   if (io == BF_IN)
     {
       my_params[io]->pw_port = pw_filter_add_port (
 	  my_params[io]->pw_filter,
 	  PW_DIRECTION_INPUT,
-	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(settings_t),
+	  PW_FILTER_PORT_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT, sizeof(settings_t),
 	  pw_properties_new (
 	  PW_KEY_FORMAT_DSP,
 			     "32 bit float mono audio",
 			     PW_KEY_PORT_NAME,
-			     "input",
+			     stream_name,
+			     PW_KEY_AUDIO_CHANNELS,
+			     "2",
+			     PW_KEY_TARGET_OBJECT, "alsa_output.pci-0000_07_00.6.HiFi__hw_Generic_1__sink",
 			     NULL),
 	  NULL, 0);
     }
@@ -500,12 +514,14 @@ setup_pw_port (int io)
       my_params[io]->pw_port = pw_filter_add_port (
 	  my_params[io]->pw_filter,
 	  PW_DIRECTION_OUTPUT,
-	  PW_FILTER_PORT_FLAG_MAP_BUFFERS, sizeof(settings_t),
+	  PW_FILTER_PORT_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT, sizeof(settings_t),
 	  pw_properties_new (
 	  PW_KEY_FORMAT_DSP,
 			     "32 bit float mono audio",
 			     PW_KEY_PORT_NAME,
-			     "output",
+			     stream_name,
+			     PW_KEY_AUDIO_CHANNELS,
+			     "2",
 			     NULL),
 	  NULL, 0);
     }
@@ -580,27 +596,44 @@ bfio_init (
       return -1;
     }
 
-  if (setup_pw_filter (io) < 0)
+  if (setup_pw_filter (io, "alsa_output.pci-0000_07_00.6.HiFi__hw_Generic_1__sink") < 0)
     {
       fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-filter.\n");
       return -1;
     }
 
-  if (setup_pw_port (io) < 0)
+  for (uint8_t channel = 0; channel < open_channels; channel++)
     {
-      fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-port.\n");
-      return -1;
+      char *channel_name[32];
+      sprintf(channel_name, "channel-%d", channel);
+      if (setup_pw_port (io, channel_name) < 0)
+	{
+	  fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-port.\n");
+	  return -1;
+	}
     }
 
   const struct spa_pod *pw_params[1];
   if (pw_filter_connect (my_params[io]->pw_filter, PW_FILTER_FLAG_RT_PROCESS,
 			 pw_params, 0) < 0)
     {
-      fprintf (stderr, "PipeWire I/O::pw_filter_connect can't connect\n");
+      fprintf (stderr, "PipeWire I/O::pw_filter_connect can not connect.\n");
       return -1;
     }
 
   return my_params[io]->dummypipe_fd;
+}
+
+static void
+pause_until_filter_is_connected (int io)
+{
+  const char *error = "";
+  while (pw_filter_get_state (my_params[io]->pw_filter, &error)
+      != PW_FILTER_STATE_PAUSED)
+    {
+      if (debug)
+	fprintf (stderr, "PipeWire I/O::wait, %s.\n", error);
+    }
 }
 
 int
@@ -610,6 +643,8 @@ bfio_start (int io)
     fprintf (stderr, "PipeWire I/O::start, %d, %p\n", io, my_params[io]);
 
   pw_thread_loop_start (my_params[io]->pw_main_loop);
+
+  pause_until_filter_is_connected (io);
 
   return 0;
 }
@@ -625,23 +660,29 @@ bfio_stop (int io)
   pw_filter_disconnect (my_params[io]->pw_filter);
   pw_filter_destroy (my_params[io]->pw_filter);
 
+  pw_proxy_destroy ((struct pw_proxy*) my_params[io]->pw_registry);
+  pw_proxy_destroy ((struct pw_proxy*) my_params[io]->pw_filter);
+  pw_proxy_destroy ((struct pw_proxy*) my_params[io]->pw_port);
+
   pw_core_disconnect (my_params[io]->pw_core);
   pw_context_destroy (my_params[io]->pw_context);
   pw_thread_loop_destroy (my_params[io]->pw_main_loop);
 
   pw_deinit ();
 
-  free (my_params[io]);
-
   close (my_params[io]->dummypipe_fd);
+
+  free (my_params[io]);
 }
 
 int
 bfio_read (int fd, void *buf, int offset, int count)
 {
-  if (debug)
-    fprintf (stderr, "PipeWire I/O::read, %d, %p, %d, %d\n", fd, buf, offset,
-	     count);
+//  if (debug)
+//    fprintf (stderr, "PipeWire I/O::read, %d, %p, %d, %d\n", fd, buf, offset,
+//	     count);
+
+  memset (buf, 0, count);
 
   return count;
 
@@ -650,9 +691,9 @@ bfio_read (int fd, void *buf, int offset, int count)
 int
 bfio_write (int fd, const void *buf, int offset, int count)
 {
-  if (debug)
-    fprintf (stderr, "PipeWire I/O::write, %d, %p, %d, %d\n", fd, buf, offset,
-	     count);
+//  if (debug)
+//    fprintf (stderr, "PipeWire I/O::write, %d, %p, %d, %d\n", fd, buf, offset,
+//	     count);
 
   return count;
 
