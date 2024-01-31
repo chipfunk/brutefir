@@ -19,7 +19,7 @@
 #include <pipewire/pipewire.h>
 #include <pipewire/core.h>
 #include <pipewire/filter.h>
-#include <pipewire/main-loop.h>
+#include <pipewire/thread-loop.h>
 #include <pipewire/port.h>
 #include <spa/param/audio/format.h>
 
@@ -39,8 +39,6 @@ typedef struct
 {
   int io;
 
-  int dummypipe_fd;
-
   char *server;
   char *device;
   char *app_name;
@@ -48,25 +46,32 @@ typedef struct
 
 } settings_t;
 
-struct pw_main_loop *main_loop;
-struct spa_hook main_loop_listener;
+static settings_t *my_params[2];
 
-struct pw_context *context;
-struct spa_hook context_listener;
+typedef struct {
+  struct pw_thread_loop *main_loop;
+  struct spa_hook main_loop_listener;
 
-struct pw_core *core;
-struct spa_hook core_listener;
+  struct pw_context *context;
+  struct spa_hook context_listener;
 
-struct pw_registry *registry;
-struct spa_hook registry_listener;
+  struct pw_core *core;
+  struct spa_hook core_listener;
 
-struct pw_filter *filter;
-struct spa_hook filter_listener;
+  struct pw_registry *registry;
+  struct spa_hook registry_listener;
 
-struct pw_port *port;
-struct spa_hook port_listener;
+  struct pw_filter *filter;
+  struct spa_hook filter_listener;
 
-int n_channels[2];
+  struct pw_port *port;
+  struct spa_hook port_listener;
+
+  int n_channels[2];
+
+} _bf_pipewire_t;
+
+static _bf_pipewire_t _bf_pipewire;
 
 typedef struct
 {
@@ -86,8 +91,6 @@ typedef struct
 } filter_data_t;
 
 static filter_data_t filter_data[2];
-
-static settings_t *my_params[2];
 
 static int
 (*_bf_process_callback) (void **_states[2], int state_count[2], void **bufs[2],
@@ -310,25 +313,25 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   float *out;
   uint32_t i, n_samples = position->clock.duration;
 
-  for (int channel = 0; channel < filter_data->port_count; channel++)
-    {
-      struct pw_buffer *buffer;
-      if ((buffer = pw_filter_dequeue_buffer (filter_data->ports[channel]))
-	  == NULL)
-	{
-	  fprintf (stderr,
-		   "PipeWire I/O::on_filter_process can not dequeue buffer\n");
-	  return;
-	}
+//  for (int channel = 0; channel < filter_data->port_count; channel++)
+//    {
+//      struct pw_buffer *buffer;
+//      if ((buffer = pw_filter_dequeue_buffer (filter_data->ports[channel]))
+//	  == NULL)
+//	{
+//	  fprintf (stderr,
+//		   "PipeWire I/O::on_filter_process can not dequeue buffer\n");
+//	  return;
+//	}
+//
+//      pw_filter_queue_buffer (filter_data->ports[channel], buffer);
+//    }
 
-      pw_filter_queue_buffer (filter_data->ports[channel], buffer);
-    }
-
-  _bf_process_callback (filter_data->bf_callback_data.callback_states,
-			filter_data->bf_callback_data.callback_state_count,
-			NULL,
-			0,
-			BF_CALLBACK_EVENT_NORMAL);
+//  _bf_process_callback (filter_data->bf_callback_data.callback_states,
+//			filter_data->bf_callback_data.callback_state_count,
+//			NULL,
+//			0,
+//			BF_CALLBACK_EVENT_NORMAL);
 }
 
 static void
@@ -404,67 +407,67 @@ _pw_main_loop_destroy_cb (void *data)
     fprintf (stderr, "PipeWire I/O::_pw_main_loop_destroy_cb.\n");
 }
 
-static const struct pw_main_loop_events main_loop_events =
+static const struct pw_thread_loop_events main_loop_events =
   { PW_VERSION_MAIN_LOOP_EVENTS, .destroy = _pw_main_loop_destroy_cb, };
 
 static void
-_pw_core_add_mem_cb ()
+_pw_core_add_mem_cb (void *data, uint32_t id, uint32_t type, int fd, uint32_t flags)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_add_mem_cb.\n");
 }
 
 static void
-_pw_core_bound_id_cb ()
+_pw_core_bound_id_cb (void *data, uint32_t id, uint32_t global_id)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_bound_id_cb.\n");
 }
 
 static void
-_pw_core_bound_props_cb ()
+_pw_core_bound_props_cb (void *data, uint32_t id, uint32_t global_id, const struct spa_dict *props)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_bound_props_cb.\n");
 }
 
 static void
-_pw_core_done_cb ()
+_pw_core_done_cb (void *data, uint32_t id, int seq)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_done_cb.\n");
 }
 
 static void
-_pw_core_error_cb ()
+_pw_core_error_cb (void *data, uint32_t id, int seq, int res, const char *message)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_error_cb.\n");
 }
 
 static void
-_pw_core_info_cb ()
+_pw_core_info_cb (void *data, const struct pw_core_info *info)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_info_cb.\n");
 }
 
 static void
-_pw_core_ping_cb ()
+_pw_core_ping_cb (void *data, uint32_t id, int seq)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_ping_cb.\n");
 }
 
 static void
-_pw_core_remove_id_cb ()
+_pw_core_remove_id_cb (void *data, uint32_t id)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_remove_id_cb.\n");
 }
 
 static void
-_pw_core_remove_mem_cb ()
+_pw_core_remove_mem_cb (void *data, uint32_t id)
 {
   if (debug)
     fprintf (stderr, "PipeWire I/O::_pw_core_remove_mem_cb.\n");
@@ -545,8 +548,8 @@ static const struct pw_context_events context_events =
 
 static int
 init_pw_registry (struct pw_core *core, struct spa_hook *listener,
-		       const struct pw_registry_events *events,
-		       size_t user_data_size, void *user_data)
+		  const struct pw_registry_events *events,
+		  size_t user_data_size, void *user_data)
 {
   struct pw_registry *registry = pw_core_get_registry (core,
   PW_VERSION_REGISTRY,
@@ -559,10 +562,9 @@ init_pw_registry (struct pw_core *core, struct spa_hook *listener,
 }
 
 static struct pw_core*
-init_pw_context_connect (struct pw_context *context,
-			      struct spa_hook *listener,
-			      const struct pw_core_events *events,
-			      size_t user_data_size, void *user_data)
+init_pw_context_connect (struct pw_context *context, struct spa_hook *listener,
+			 const struct pw_core_events *events,
+			 size_t user_data_size, void *user_data)
 {
   struct pw_properties *props = NULL;
 
@@ -570,7 +572,7 @@ init_pw_context_connect (struct pw_context *context,
   if (core == NULL)
     {
       fprintf (stderr, "PipeWire I/O::init can not connect context\n");
-      return -1;
+      return NULL;
     }
 
 //  spa_zero(listener);
@@ -580,15 +582,15 @@ init_pw_context_connect (struct pw_context *context,
 }
 
 static struct pw_context*
-init_pw_context (const struct pw_main_loop *main_loop,
-		      struct spa_hook *listener,
-		      const struct pw_context_events *events,
-		      size_t user_data_size, void *user_data)
+init_pw_context (const struct pw_thread_loop *main_loop,
+		 struct spa_hook *listener,
+		 const struct pw_context_events *events, size_t user_data_size,
+		 void *user_data)
 {
   struct pw_properties *props = NULL;
 
   struct pw_context *context = pw_context_new (
-      pw_main_loop_get_loop (main_loop), NULL, user_data_size);
+      pw_thread_loop_get_loop (main_loop), props, user_data_size);
 
 //  spa_zero(listener);
   pw_context_add_listener (context, listener, events, user_data);
@@ -598,8 +600,8 @@ init_pw_context (const struct pw_main_loop *main_loop,
 
 static struct pw_filter*
 init_pw_filter (struct pw_core *core, char *filter_name,
-		     struct spa_hook *listener, struct pw_filter_events *events,
-		     filter_data_t *filter_data)
+		struct spa_hook *listener, struct pw_filter_events *events,
+		filter_data_t *filter_data)
 {
   struct pw_properties *filter_props = pw_properties_new (PW_KEY_MEDIA_TYPE,
 							  "Audio",
@@ -645,9 +647,8 @@ init_pw_filter (struct pw_core *core, char *filter_name,
 
 static void*
 init_pw_port (struct pw_filter *filter, enum spa_direction direction,
-		   struct spa_hook *listener,
-		   const struct pw_port_events *events, const char *device_name,
-		   const char *stream_name)
+	      struct spa_hook *listener, const struct pw_port_events *events,
+	      const char *device_name, const char *stream_name)
 {
   struct pw_properties *props = pw_properties_new (PW_KEY_FORMAT_DSP,
 						   "32 bit float mono audio",
@@ -694,8 +695,8 @@ bfio_preinit (int *version_major, int *version_minor, int
 {
   debug = true;
 
-  memset (callback_sched, 0, sizeof(*callback_sched));
-  *callback_sched_policy = SCHED_FIFO;
+//  memset (callback_sched, 0, sizeof(*callback_sched));
+//  *callback_sched_policy = SCHED_FIFO;
 
   if (debug)
     fprintf (stderr, "PipeWire I/O::preinit, %d\n", io);
@@ -720,19 +721,19 @@ bfio_preinit (int *version_major, int *version_minor, int
 
   *uses_sample_clock = 0;
 
-  if (*sample_format == BF_SAMPLE_FORMAT_AUTO)
-    {
-#ifdef __LITTLE_ENDIAN
-      *sample_format = BF_SAMPLE_FORMAT_FLOAT_LE;
-#else ifdef __BIG_ENDIAN
-      *sample_format = BF_SAMPLE_FORMAT_FLOAT_BE;
-#endif
-    }
-  *sample_format = BF_SAMPLE_FORMAT_S16_LE;
+//  if (*sample_format == BF_SAMPLE_FORMAT_AUTO)
+//    {
+//#ifdef __LITTLE_ENDIAN
+//      *sample_format = BF_SAMPLE_FORMAT_FLOAT_LE;
+//#else ifdef __BIG_ENDIAN
+//      *sample_format = BF_SAMPLE_FORMAT_FLOAT_BE;
+//#endif
+//    }
+//  *sample_format = BF_SAMPLE_FORMAT_S16_LE;
 
   my_params[io] = params;
 
-  return my_params[io] = params;
+  return my_params[io];
 }
 
 int
@@ -757,13 +758,13 @@ bfio_init (
 
   _bf_process_callback = process_callback;
 
-  filter_data[io].bf_callback_data.callback_states[io] = &callback_state;
-  filter_data[io].bf_callback_data.callback_state_count[io] = 1;
+//  filter_data[io].bf_callback_data.callback_states[io] = &callback_state;
+//  filter_data[io].bf_callback_data.callback_state_count[io] = 1;
 
   *device_period_size = period_size;
   *isinterleaved = false;
 
-  n_channels[io] = open_channels;
+  _bf_pipewire.n_channels[io] = open_channels;
 
 //  enum spa_audio_format audio_format = detect_pw_sample_format (sample_format);
 //  if (audio_format == SPA_AUDIO_FORMAT_UNKNOWN)
@@ -804,8 +805,8 @@ bfio_synch_start ()
   const struct spa_dict *loop_props =
     { 0, };
 
-  main_loop = pw_main_loop_new (loop_props);
-  if (main_loop == NULL)
+  _bf_pipewire.main_loop = pw_thread_loop_new ("loop-name", loop_props);
+  if (_bf_pipewire.main_loop == NULL)
     {
       fprintf (stderr,
 	       "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
@@ -813,26 +814,26 @@ bfio_synch_start ()
     }
 
 //  spa_zero(main_loop_listener);
-  pw_main_loop_add_listener (main_loop, &main_loop_listener, &main_loop_events,
+  pw_thread_loop_add_listener (_bf_pipewire.main_loop, &_bf_pipewire.main_loop_listener, &main_loop_events,
   NULL);
 
-  context = init_pw_context (main_loop, &context_listener, &context_events,
-				  0, NULL);
-  if (context == NULL)
+  _bf_pipewire.context = init_pw_context (_bf_pipewire.main_loop, &_bf_pipewire.context_listener, &context_events, 0,
+			     NULL);
+  if (_bf_pipewire.context == NULL)
     {
       fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-context.\n");
       return -1;
     }
 
-  core = init_pw_context_connect (context, &core_listener, &core_events, 0,
+  _bf_pipewire.core = init_pw_context_connect (_bf_pipewire.context, &_bf_pipewire.core_listener, &core_events, 0,
   NULL);
-  if (core == NULL)
+  if (_bf_pipewire.core == NULL)
     {
       fprintf (stderr, "PipeWire I/O::bfio_init_pw_context can not connect.\n");
       return 1;
     }
 
-  if (init_pw_registry (core, &registry_listener, &registry_events, 0,
+  if (init_pw_registry (_bf_pipewire.core, &_bf_pipewire.registry_listener, &registry_events, 0,
   NULL) < 0)
     {
       fprintf (stderr,
@@ -841,9 +842,9 @@ bfio_synch_start ()
     }
 
   char *filter_name = "Filter-name";
-  filter = init_pw_filter (core, filter_name, &filter_listener,
-				&filter_events, NULL);
-  if (filter == NULL)
+  _bf_pipewire.filter = init_pw_filter (_bf_pipewire.core, filter_name, &_bf_pipewire.filter_listener, &filter_events,
+			   NULL);
+  if (_bf_pipewire.filter == NULL)
     {
       fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-filter.\n");
       return -1;
@@ -854,13 +855,12 @@ bfio_synch_start ()
       enum spa_direction direction =
 	  (io == BF_IN) ? SPA_DIRECTION_INPUT : SPA_DIRECTION_OUTPUT;
 
-      for (uint8_t channel = 0; channel < n_channels[io]; channel++)
+      for (uint8_t channel = 0; channel < _bf_pipewire.n_channels[io]; channel++)
 	{
 	  fprintf (stderr, "PipeWire I/O::init ports, %d, %d.\n", io, channel);
-	  void *port_data = init_pw_port (filter, direction,
-					       &port_listener, &port_events,
-					       my_params[io]->device,
-					       "channel-name");
+	  void *port_data = init_pw_port (_bf_pipewire.filter, direction, &_bf_pipewire.port_listener,
+					  &port_events, my_params[io]->device,
+					  "channel-name");
 	  if (port_data == NULL)
 	    {
 	      fprintf (stderr,
@@ -868,11 +868,11 @@ bfio_synch_start ()
 	      return -1;
 	    }
 
-	  filter_data[io].ports[channel] = port_data;
+//	  filter_data[io].ports[channel] = port_data;
 	}
     }
 
-  pw_main_loop_run (main_loop);
+  pw_thread_loop_start (_bf_pipewire.main_loop);
 
   return 0;
 }
@@ -883,7 +883,7 @@ bfio_synch_stop ()
   if (debug)
     fprintf (stderr, "PipeWire I/O::synch_stop.\n");
 
-  pw_main_loop_quit (main_loop);
+  pw_thread_loop_stop (_bf_pipewire.main_loop);
 
-  pw_main_loop_destroy (main_loop);
+  pw_thread_loop_destroy (_bf_pipewire.main_loop);
 }
