@@ -50,6 +50,7 @@ table, th, td {
 <li><a href="brutefir.html#bfio_oss">OSS sound card I/O (oss)</a>
 <li><a href="brutefir.html#bfio_jack">JACK audio server I/O (jack)</a>
 <li><a href="brutefir.html#bfio_file">Raw PCM file I/O (file)</a>
+<li><a href="brutefir.html#bfio_pipewire">PipeWire I/O (pipewire)</a>
 <li><a href="brutefir.html#bfio_own">Writing your own I/O module</a>
 </ul>
 <li><a href="brutefir.html#bflogic">Logic modules</a>
@@ -1927,10 +1928,18 @@ By using <code>/dev/stdin</code> like this <code>"file" { path:
 it is then possible to do things like
 <code>mpg123 -s test.mp3 | brutefir</code>.
 
+<h3 id="bfio_pipewire">PipeWire I/O</h3>
+<p></p>
+
 <h3 id="bfio_own">Writing your own I/O module</h3>
 <p>
 This will probably never be documented. The best way is to look at the
 source code to see how it is done.
+
+There are two approches to implement an I/O module, the synchronous read/write and the asynchronous callback-based approach.
+
+Initial examples are provided in files <a href="./bfio_read_write.c">bfio_read_write.c</a> and <a href="./bfio_callback.c">bfio_callback.c</a>.
+
 
 <h2 id="bflogic">Logic modules</h2>
 

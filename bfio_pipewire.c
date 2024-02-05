@@ -76,25 +76,25 @@ static pipewire_t pipewire;
 
 typedef struct
 {
-  void **callback_states[2];
-  int callback_state_count[2];
-  void **buffers[2];
-} bf_callback_data_t;
+  void **states[2];
+  int state_count[2];
+  void *buffers[2];
+} bf_callback_t;
 
 typedef void *port_data_t;
 
 typedef struct
 {
   struct pw_filter *filter;
-  bf_callback_data_t bf_callback_data;
-  port_data_t ports[BF_MAXCHANNELS];
+  bf_callback_t bf_callback;
+  port_data_t ports[2][BF_MAXCHANNELS];
   int port_count[2];
 } filter_data_t;
 
-static filter_data_t filter_data[2];
+static filter_data_t filter_data;
 
 static int
-(*_bf_process_callback) (void **_states[2], int state_count[2], void **bufs[2],
+(*_bf_process_callback) (void **states[2], int state_count[2], void **bufs[2],
 			 int count, int event);
 
 static int
@@ -311,7 +311,7 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   float *out;
   uint32_t i, n_samples = position->clock.duration;
 
-  for (int channel = 0; channel < filter_data->port_count; channel++)
+  for (int channel = 0; channel < filter_data->port_count[BF_IN]; channel++)
     {
       struct pw_buffer *buffer;
       if ((buffer = pw_filter_dequeue_buffer (filter_data->ports[channel]))
@@ -325,8 +325,8 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
       fprintf (stderr,
 	       "PipeWire I/O::on_filter_process dequeue buffer, channel: %d, buf: %p.\n", channel, buffer);
 
-      _bf_process_callback (&filter_data->bf_callback_data.callback_states,
-    			&filter_data->bf_callback_data.callback_state_count,
+      _bf_process_callback (filter_data->bf_callback.states,
+    			filter_data->bf_callback.state_count,
     			&buffer->buffer->datas->data,
     			n_samples,
     			BF_CALLBACK_EVENT_NORMAL);
@@ -334,8 +334,8 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
       pw_filter_queue_buffer (filter_data->ports[channel], buffer);
     }
 
-  _bf_process_callback (filter_data->bf_callback_data.callback_states,
-			filter_data->bf_callback_data.callback_state_count,
+  _bf_process_callback (filter_data->bf_callback.states,
+			filter_data->bf_callback.state_count,
 			NULL,
 			0,
 			BF_CALLBACK_EVENT_FINISHED);
@@ -750,7 +750,7 @@ bfio_init (
     int *isinterleaved,
     void *callback_state,
     int
-    (*process_callback) (void **callback_states[2], int callback_state_count[2],
+    (*process_callback) (void **states[2], int state_count[2],
 			 void **buffers[2], int frame_count, int event))
 {
   if (debug)
@@ -758,8 +758,8 @@ bfio_init (
 
   _bf_process_callback = process_callback;
 
-  filter_data[io].bf_callback_data.callback_states[io] = callback_state;
-  filter_data[io].bf_callback_data.callback_state_count[io] = 1;
+  filter_data[io].bf_callback.states[io] = callback_state;
+  filter_data[io].bf_callback.state_count[io] = 1;
 
   *device_period_size = period_size;
   *isinterleaved = false;
