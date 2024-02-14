@@ -22,6 +22,7 @@
 #include <pipewire/filter.h>
 #include <pipewire/thread-loop.h>
 #include <pipewire/port.h>
+#include <pipewire/stream.h>
 
 #define IS_BFIO_MODULE
 #include "bfmod.h"
@@ -30,25 +31,15 @@
 static bool debug = false;
 
 #define GET_TOKEN(token, errstr)                              \
-  if (get_config_token(&lexval) != token) {                   \
+  if (get_config_token(&lexval) != token)                     \
     {                                                         \
       fprintf(stderr, "PipeWire I/O: Parse error: " errstr);  \
       return -1;                                              \
     }
 
-typedef struct
-{
-  int io;
-
-  char *server;
-  char *device;
-  char *app_name;
-  char *stream_name;
-
-} settings_t;
-
-static settings_t *my_params[2];
-
+static int
+(*_bf_process_callback) (void **states[2], int state_count[2], void **bufs[2],
+			 int frame_count, int event);
 typedef struct
 {
   struct pw_thread_loop *main_loop;
@@ -67,13 +58,31 @@ typedef struct
   struct spa_hook filter_listener;
 
   struct pw_port *port;
+  void *port_data;
   struct spa_hook port_listener;
 
-  int n_channels[2];
+  int direction;
 
 } pipewire_t;
 
-static pipewire_t pipewire;
+typedef struct
+{
+  int device_no;
+  int io;
+
+  int open_channels;
+  int sample_rate;
+
+  char *server;
+  char *device_name;
+  char *app_name;
+  char *stream_name;
+
+  pipewire_t pipewire;
+} params_t;
+
+static params_t device[BF_MAXMODULES];
+static uint8_t device_count = 0;
 
 static void **bf_states[2];
 
@@ -94,10 +103,6 @@ typedef struct
 } filter_data_t;
 
 static filter_data_t filter_data;
-
-static int
-(*_bf_process_callback) (void **states[2], int state_count[2], void **bufs[2],
-			 int frame_count, int event);
 
 static int
 check_version (const int *version_major, const int *version_minor)
@@ -163,7 +168,7 @@ detect_pw_sample_format (const int bf_sample_format)
  * Returns 0 on success, negative values on failure.
  */
 static int
-parse_config_options (const int io, settings_t *settings, int
+parse_config_options (params_t *settings, int
 (*get_config_token) (union bflexval *lexval))
 {
   union bflexval lexval;
@@ -180,7 +185,7 @@ parse_config_options (const int io, settings_t *settings, int
 	  else if (strcmp (lexval.field, "device") == 0)
 	    {
 	      GET_TOKEN(BF_LEXVAL_STRING, "expected string.\n");
-	      settings->device = strdup (lexval.string);
+	      settings->device_name = strdup (lexval.string);
 	    }
 	  else if (strcmp (lexval.field, "app_name") == 0)
 	    {
@@ -320,44 +325,44 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 	"PipeWire I/O::_pw_filter_process_cb, data: %p, n_samples: %d, state: %d\n",
 	data, n_samples, position->state);
 
-  FOR_IN_AND_OUT
-    {
-      for (int channel = 0; channel < filter_data.port_count[IO]; channel++)
-	{
-	  bf_buffers[IO][channel] = NULL;
+//  FOR_IN_AND_OUT
+//    {
+//      for (int channel = 0; channel < filter_data.port_count[IO]; channel++)
+//	{
+//	  bf_buffers[IO][channel] = NULL;
+//
+//	  pw_buffers[IO][channel] = pw_filter_dequeue_buffer (
+//	      filter_data.ports[IO][channel]);
+//	  if (pw_buffers[IO][channel] == NULL)
+//	    {
+//	      bf_buffers[IO][channel] = &null_buffer;
+//	    }
+//	  else
+//	    {
+//	      bf_buffers[IO][channel] =
+//		  pw_buffers[IO][channel]->buffer->datas->data;
+//	    }
+//	}
+//    }
 
-	  pw_buffers[IO][channel] = pw_filter_dequeue_buffer (
-	      filter_data.ports[IO][channel]);
-	  if (pw_buffers[IO][channel] == NULL)
-	    {
-	      bf_buffers[IO][channel] = &null_buffer;
-	    }
-	  else
-	    {
-	      bf_buffers[IO][channel] =
-		  pw_buffers[IO][channel]->buffer->datas->data;
-	    }
-	}
-    }
+//  int bf_state_count[2] =
+//    { 1, 1 };
 
-  int bf_state_count[2] =
-    { 1, 1 };
+//  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers,
+//				  n_samples,
+//				  BF_CALLBACK_EVENT_NORMAL);
 
-  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers,
-				  n_samples,
-				  BF_CALLBACK_EVENT_NORMAL);
-
-  FOR_IN_AND_OUT
-    {
-      for (int channel = 0; channel < filter_data.port_count[IO]; channel++)
-	{
-	  if (pw_buffers[IO][channel] != NULL)
-	    {
-	      pw_filter_queue_buffer (filter_data.ports[IO][channel],
-				      pw_buffers[IO][channel]);
-	    }
-	}
-    }
+//  FOR_IN_AND_OUT
+//    {
+//      for (int channel = 0; channel < filter_data.port_count[IO]; channel++)
+//	{
+//	  if (pw_buffers[IO][channel] != NULL)
+//	    {
+//	      pw_filter_queue_buffer (filter_data.ports[IO][channel],
+//				      pw_buffers[IO][channel]);
+//	    }
+//	}
+//    }
 }
 
 static void
@@ -399,8 +404,8 @@ _pw_filter_state_changed_cb (void *data, enum pw_filter_state old,
 {
   if (debug)
     fprintf (stderr,
-	     "PipeWire I/O::_pw_filter_state_changed_cb, from: %s to %s.\n",
-	     pw_filter_state_as_string (old),
+	     "PipeWire I/O::_pw_filter_state_changed_cb, %p, from: %s to %s.\n",
+	     data, pw_filter_state_as_string (old),
 	     pw_filter_state_as_string (state));
 
   switch (state)
@@ -419,13 +424,11 @@ _pw_filter_state_changed_cb (void *data, enum pw_filter_state old,
 }
 
 static struct pw_filter_events filter_events =
-  { PW_VERSION_FILTER_EVENTS,
-
-  .process = _pw_filter_process_cb, .add_buffer = _pw_filter_add_buffer_cb,
-      .command = _pw_filter_command_cb, .destroy = _pw_filter_destroy_cb,
-      .drained = _pw_filter_drained_cb, .io_changed = _pw_filter_io_changed_cb,
-      .param_changed = _pw_filter_param_changed_cb, .remove_buffer =
-	  _pw_filter_remove_buffer_cb, .state_changed =
+  { PW_VERSION_FILTER_EVENTS, .process = _pw_filter_process_cb, .add_buffer =
+      _pw_filter_add_buffer_cb, .command = _pw_filter_command_cb, .destroy =
+      _pw_filter_destroy_cb, .drained = _pw_filter_drained_cb, .io_changed =
+      _pw_filter_io_changed_cb, .param_changed = _pw_filter_param_changed_cb,
+      .remove_buffer = _pw_filter_remove_buffer_cb, .state_changed =
 	  _pw_filter_state_changed_cb, };
 
 static void
@@ -587,48 +590,67 @@ init_pw_registry (struct pw_core *core, struct spa_hook *listener,
   return 0;
 }
 
-static struct pw_core*
-init_pw_context_connect (struct pw_context *context, struct spa_hook *listener,
-			 const struct pw_core_events *events,
-			 size_t user_data_size, void *user_data)
+static int
+init_pipewire_port (const int i)
 {
-  struct pw_properties *props = NULL;
+  enum spa_direction direction =
+	  (device[i].io == BF_IN) ? SPA_DIRECTION_INPUT : SPA_DIRECTION_OUTPUT;
 
-  struct pw_core *core = pw_context_connect (context, props, user_data_size);
-  if (core == NULL)
-    {
-      fprintf (stderr, "PipeWire I/O::init can not connect context\n");
-      return NULL;
-    }
+  for (uint8_t channel = 0; channel < device[i].open_channels; channel++)
+	{
+	  char channel_name[32];
+	  sprintf (channel_name,
+		   (direction == SPA_DIRECTION_INPUT) ? "in %d" : "out %d",
+		   channel);
 
-//  spa_zero(listener);
-  pw_core_add_listener(core, listener, events, user_data);
+	  fprintf (stderr,
+		   "PipeWire I/O::init port, device: %d, channel: %d.\n", i,
+		   channel);
 
-  return core;
+	  struct pw_properties *port_props = pw_properties_new (
+	      PW_KEY_FORMAT_DSP, "32 bit float mono audio",
+	      PW_KEY_PORT_NAME,
+	      channel_name,
+//	      PW_KEY_AUDIO_CHANNELS,
+//	      "2",
+	      NULL);
+
+	  if (device[i].device_name != NULL)
+	    pw_properties_set (port_props, PW_KEY_TARGET_OBJECT,
+			       device[i].device_name);
+
+	  device[i].pipewire.port_data = pw_filter_add_port (
+	      device[i].pipewire.filter, direction,
+	      PW_FILTER_PORT_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT, 0,
+	      port_props,
+	      NULL,
+	      0);
+
+	  if (device[i].pipewire.port_data == NULL)
+	    {
+	      fprintf (stderr,
+		       "PipeWire I/O::init can not setup PipeWire-port.\n");
+	      return -1;
+	    }
+
+//	  spa_zero(device[i].pipewire.port_listener);
+//	  pw_port_add_listener(device[i].pipewire.port_data,
+//			       &device[i].pipewire.port_listener, &port_events,
+//			       NULL);
+
+//	  filter_data.ports[IO][channel] = port_data;
+	}
+
+  return 0;
 }
 
-static struct pw_context*
-init_pw_context (struct pw_thread_loop *main_loop, struct spa_hook *listener,
-		 const struct pw_context_events *events, size_t user_data_size,
-		 void *user_data)
+static int
+init_pipewire_filter (const int i)
 {
-  struct pw_properties *props = NULL;
+  const char *filter_name = "Filter-name";
 
-  struct pw_context *context = pw_context_new (
-      pw_thread_loop_get_loop (main_loop), props, user_data_size);
-
-//  spa_zero(listener);
-  pw_context_add_listener (context, listener, events, user_data);
-
-  return context;
-}
-
-static struct pw_filter*
-init_pw_filter (struct pw_core *core, const char *filter_name,
-		struct spa_hook *listener, struct pw_filter_events *events,
-		filter_data_t *filter_data)
-{
-  struct pw_properties *filter_props = pw_properties_new (PW_KEY_MEDIA_TYPE,
+  struct pw_properties *filter_props = pw_properties_new (
+  PW_KEY_MEDIA_TYPE,
 							  "Audio",
 							  PW_KEY_MEDIA_CATEGORY,
 							  "Filter",
@@ -638,16 +660,20 @@ init_pw_filter (struct pw_core *core, const char *filter_name,
 							  "2",
 							  NULL);
 
-  struct pw_filter *filter = pw_filter_new (core, filter_name, filter_props);
-  if (filter == NULL)
+  device[i].pipewire.filter = pw_filter_new (device[i].pipewire.core,
+					     filter_name, filter_props);
+  if (device[i].pipewire.filter == NULL)
     {
-      fprintf (stderr,
+      fprintf (
+      stderr,
 	       "PipeWire I/O::bfio_init_pw_filter can not create filter.\n");
-      return NULL;
+      return -1;
     }
 
-//  spa_zero(listener);
-  pw_filter_add_listener (filter, listener, events, filter_data);
+  spa_zero(device[i].pipewire.filter_listener);
+  pw_filter_add_listener (device[i].pipewire.filter,
+			  &device[i].pipewire.filter_listener, &filter_events,
+			  NULL);
 
   /* Make one parameter with the supported formats. The SPA_PARAM_EnumFormat
    * id means that this is a format enumeration (of 1 value).
@@ -661,48 +687,132 @@ init_pw_filter (struct pw_core *core, const char *filter_name,
 					  &SPA_AUDIO_INFO_RAW_INIT(.format =
 					      SPA_AUDIO_FORMAT_F32));
 
-  if (pw_filter_connect (filter, PW_FILTER_FLAG_ASYNC, params, 0) < 0)
+  if (pw_filter_connect (device[i].pipewire.filter, PW_FILTER_FLAG_ASYNC,
+			 params, 0) < 0)
     {
       fprintf (stderr, "PipeWire I/O::bfio_init_pw_filter can not connect.\n");
-      return NULL;
+      return -1;
     }
 
-  return filter;
+  return 0;
 }
 
-static void*
-init_pw_port (struct pw_filter *filter, enum spa_direction direction,
-	      struct spa_hook *listener, const struct pw_port_events *events,
-	      const char *device_name, const char *stream_name)
+static int
+init_pipewire_context (const int i)
 {
-  struct pw_properties *props = pw_properties_new (PW_KEY_FORMAT_DSP,
-						   "32 bit float mono audio",
-						   PW_KEY_PORT_NAME,
-						   stream_name,
-						   PW_KEY_AUDIO_CHANNELS,
-						   "2",
-						   NULL);
+  struct spa_dict *main_loop_props =
+    { 0, };
 
-  if (device_name != NULL)
-    pw_properties_set (props, PW_KEY_TARGET_OBJECT, device_name);
-
-  void *port_data = pw_filter_add_port (
-      filter, direction,
-      PW_FILTER_PORT_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT,
-      sizeof(settings_t), props,
-      NULL,
-      0);
-
-  if (port_data == NULL)
+  device[i].pipewire.main_loop = pw_thread_loop_new ("loop-name",
+						     main_loop_props);
+  if (device[i].pipewire.main_loop == NULL)
     {
-      fprintf (stderr, "PipeWire I/O::init can not create port.");
-      return NULL;
+      fprintf (stderr,
+	       "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
+      return -1;
     }
 
-//  spa_zero(listener);
-  pw_port_add_listener(port_data, listener, events, NULL);
+  spa_zero(device[i].pipewire.main_loop_listener);
+  pw_thread_loop_add_listener (device[i].pipewire.main_loop,
+			       &device[i].pipewire.main_loop_listener,
+			       &main_loop_events,
+			       NULL);
 
-  return port_data;
+  struct pw_properties *context_props = NULL;
+
+  device[i].pipewire.context = pw_context_new (
+      pw_thread_loop_get_loop (device[i].pipewire.main_loop), context_props, 0);
+
+  if (device[i].pipewire.context == NULL)
+    {
+      fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-context.\n");
+      return -1;
+    }
+
+  spa_zero(device[i].pipewire.context_listener);
+  pw_context_add_listener (device[i].pipewire.context,
+			   &device[i].pipewire.context_listener,
+			   &context_events, NULL);
+
+  struct pw_properties *core_props = NULL;
+
+  device[i].pipewire.core = pw_context_connect (device[i].pipewire.context,
+						core_props, 0);
+  if (device[i].pipewire.core == NULL)
+    {
+      fprintf (stderr, "PipeWire I/O::init can not connect context\n");
+      return -1;
+    }
+
+  spa_zero(device[i].pipewire.core_listener);
+  pw_core_add_listener(device[i].pipewire.core,
+		       &device[i].pipewire.core_listener, &core_events, NULL);
+
+  device[i].pipewire.registry = pw_core_get_registry (device[i].pipewire.core,
+						      PW_VERSION_REGISTRY, 0);
+
+  spa_zero(device[i].pipewire.registry_listener);
+  pw_registry_add_listener(device[i].pipewire.registry,
+			   &device[i].pipewire.registry_listener,
+			   &registry_events, NULL);
+
+  return 0;
+}
+
+static int
+init_pipewire ();
+static int
+init_pipewire ()
+{
+  pw_init (NULL, NULL);
+
+  for (int i = 0; i < device_count; i++)
+    {
+      if (debug)
+	fprintf (stderr, "PipeWire I/O::synch_start, device: %d.\n", i);
+
+      if (init_pipewire_context (i) < 0)
+	{
+	  fprintf (
+	      stderr,
+	      "PipeWire I/O::synch_start, can not init pipewire, device: %d.\n",
+	      i);
+	  return -1;
+	}
+
+      if (init_pipewire_filter (i) < 0)
+	{
+	  fprintf (
+	      stderr,
+	      "PipeWire I/O::synch_start, can not init filter, device: %d.\n",
+	      i);
+	  return -1;
+	}
+
+      if (init_pipewire_port (i) < 0)
+	{
+	  fprintf (
+	      stderr,
+	      "PipeWire I/O::synch_start, can not init ports, device: %d.\n",
+	      i);
+	  return -1;
+	}
+    }
+
+  return 0;
+}
+
+static void
+print_params (params_t *params)
+{
+  fprintf (stderr, "PipeWire I/O:device-no: %d\n", params->device_no);
+  fprintf (stderr, "PipeWire I/O:io: %d\n", params->io);
+  fprintf (stderr, "PipeWire I/O:server: %s\n", params->server);
+  fprintf (stderr, "PipeWire I/O:app-name: %s\n", params->app_name);
+  fprintf (stderr, "PipeWire I/O:stream-name: %s\n", params->stream_name);
+  fprintf (stderr, "PipeWire I/O:server: channels: %d, sample-rate: %d\n",
+	   params->open_channels, params->sample_rate);
+  fprintf (stderr, "PipeWire I/O:device-name: %s\n", params->device_name);
 }
 
 int
@@ -718,13 +828,14 @@ bfio_preinit (int *version_major, int *version_minor, int
 	      int *uses_sample_clock, int *callback_sched_policy,
 	      struct sched_param *callback_sched, int _debug)
 {
-  debug = true;
+  debug = _debug;
 
   memset (callback_sched, 0, sizeof(*callback_sched));
   *callback_sched_policy = SCHED_FIFO;
 
   if (debug)
-    fprintf (stderr, "PipeWire I/O::preinit, %d\n", io);
+    fprintf (stderr, "PipeWire I/O::preinit, device: %d, io: %d\n",
+	     device_count, io);
 
   if (!check_version (version_major, version_minor))
     {
@@ -735,14 +846,25 @@ bfio_preinit (int *version_major, int *version_minor, int
       return NULL;
     }
 
-  settings_t *params = malloc (sizeof(settings_t));
-  memset (params, 0, sizeof(settings_t));
+  params_t *params = malloc (sizeof(params_t));
+  memset (params, 0, sizeof(params_t));
 
-  if (parse_config_options (io, params, get_config_token) < 0)
+  if (debug)
+    fprintf (stderr, "PipeWire I/O::preinit, params: %p\n", params);
+
+  if (parse_config_options (params, get_config_token) < 0)
     {
       fprintf (stderr, "PipeWire I/O: Error parsing options.\n");
       return NULL;
     }
+
+  params->io = io;
+  params->device_no = device_count;
+  params->sample_rate = sample_rate;
+  params->open_channels = open_channels;
+
+  if (debug)
+    print_params (params);
 
   *uses_sample_clock = 0;
 
@@ -755,9 +877,11 @@ bfio_preinit (int *version_major, int *version_minor, int
 #endif
     }
 
-  my_params[io] = params;
+  device[device_count] = *params;
 
-  return my_params[io];
+  device_count++;
+
+  return params;
 }
 
 int
@@ -778,8 +902,8 @@ bfio_init (
 			 void **buffers[2], int frame_count, int event))
 {
   if (debug)
-    fprintf (stderr, "PipeWire I/O::init, %d, %p, %p\n", io, my_params[io],
-	     callback_state);
+    fprintf (stderr, "PipeWire I/O::init, io: %d, params: %p, callback: %p\n",
+	     io, params, callback_state);
 
   if (used_channels != open_channels)
     {
@@ -806,7 +930,7 @@ bfio_init (
   *isinterleaved = false;
 
   filter_data.port_count[io] = used_channels;
-  pipewire.n_channels[io] = used_channels;
+//  device[i].pipewire.n_channels[io] = used_channels;
 
   enum spa_audio_format audio_format = detect_pw_sample_format (sample_format);
   if (audio_format == SPA_AUDIO_FORMAT_UNKNOWN)
@@ -842,89 +966,21 @@ bfio_synch_start ()
   if (debug)
     fprintf (stderr, "PipeWire I/O::synch_start.\n");
 
-  pw_init (NULL, NULL);
-
-  const struct spa_dict *loop_props =
-    { 0, };
-
-  pipewire.main_loop = pw_thread_loop_new ("loop-name", loop_props);
-  if (pipewire.main_loop == NULL)
+  if (init_pipewire () < 0)
     {
-      fprintf (stderr,
-	       "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
+      fprintf (stderr, "PipeWire I/O: can NOT init PipeWire.\n");
       return -1;
     }
 
-//  spa_zero(_bf_pipewire.main_loop_listener);
-  pw_thread_loop_add_listener (pipewire.main_loop, &pipewire.main_loop_listener,
-			       &main_loop_events,
-			       NULL);
-
-  pipewire.context = init_pw_context (pipewire.main_loop,
-				      &pipewire.context_listener,
-				      &context_events, 0,
-				      NULL);
-  if (pipewire.context == NULL)
+  for (int i = 0; i < device_count; i++)
     {
-      fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-context.\n");
-      return -1;
-    }
-
-  pipewire.core = init_pw_context_connect (pipewire.context,
-					   &pipewire.core_listener,
-					   &core_events, 0,
-					   NULL);
-  if (pipewire.core == NULL)
-    {
-      fprintf (stderr, "PipeWire I/O::bfio_init_pw_context can not connect.\n");
-      return 1;
-    }
-
-  if (init_pw_registry (pipewire.core, &pipewire.registry_listener,
-			&registry_events, 0,
-			NULL) < 0)
-    {
-      fprintf (stderr,
-	       "PipeWire I/O::init can not connect PipeWire-context.\n");
-      return -1;
-    }
-
-  const char *filter_name = "Filter-name";
-  pipewire.filter = init_pw_filter (pipewire.core, filter_name,
-				    &pipewire.filter_listener, &filter_events,
-				    &filter_data);
-  if (pipewire.filter == NULL)
-    {
-      fprintf (stderr, "PipeWire I/O::init can not setup PipeWire-filter.\n");
-      return -1;
-    }
-
-  FOR_IN_AND_OUT
-    {
-      enum spa_direction direction =
-	  (IO == BF_IN) ? SPA_DIRECTION_INPUT : SPA_DIRECTION_OUTPUT;
-
-      for (uint8_t channel = 0; channel < pipewire.n_channels[IO]; channel++)
+      if (pw_thread_loop_start (device[i].pipewire.main_loop) < 0)
 	{
-	  char channel_name[32];
-	  sprintf (channel_name, (IO == BF_IN) ? "in %d" : "out %d", channel);
-
-	  fprintf (stderr, "PipeWire I/O::init ports, %d, %d.\n", IO, channel);
-	  void *port_data = init_pw_port (pipewire.filter, direction,
-					  &pipewire.port_listener, &port_events,
-					  my_params[IO]->device, channel_name);
-	  if (port_data == NULL)
-	    {
-	      fprintf (stderr,
-		       "PipeWire I/O::init can not setup PipeWire-port.\n");
-	      return -1;
-	    }
-
-	  filter_data.ports[IO][channel] = port_data;
+	  fprintf (stderr, "PipeWire I/O: can run main-loop for device %d.\n",
+		   i);
+	  return -1;
 	}
     }
-
-  pw_thread_loop_start (pipewire.main_loop);
 
   return 0;
 }
@@ -935,7 +991,9 @@ bfio_synch_stop ()
   if (debug)
     fprintf (stderr, "PipeWire I/O::synch_stop.\n");
 
-  pw_thread_loop_stop (pipewire.main_loop);
-
-  pw_thread_loop_destroy (pipewire.main_loop);
+  for (int i = 0; i < device_count; i++)
+    {
+      pw_thread_loop_stop (device[i].pipewire.main_loop);
+      pw_thread_loop_destroy (device[i].pipewire.main_loop);
+    }
 }
