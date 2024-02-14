@@ -44,6 +44,12 @@ typedef struct
   pa_mainloop_api *api;
   pa_context *context;
   pa_stream *stream;
+
+  pa_sample_spec sample_spec;
+  pa_buffer_attr buffer_attr;
+  pa_sample_format_t sample_format;
+  pa_channel_map channel_map;
+
 } pulseaudio_t;
 
 static pulseaudio_t pulseaudio;
@@ -59,11 +65,6 @@ typedef struct bfio_pulse_settings
   char *app_name;       // The name of this application as shown in PA
   char *device_name;	// Device-name to connect stream to, or NULL for default
   char *stream_name;    // The stream-name as shown in PA
-
-  pa_sample_spec sample_spec;
-  pa_buffer_attr buffer_attr;
-  pa_sample_format_t sample_format;
-  pa_channel_map channel_map;
 
   pulseaudio_t pulseaudio;
 } bfio_pulse_settings_t;
@@ -194,7 +195,7 @@ parse_config_options (bfio_pulse_settings_t *into_settings, int
 	    }
 	  else if (strcmp (lexval.field, "buffer_attr") == 0)
 	    {
-	      parse_config_options_buffer_attr (&into_settings->buffer_attr,
+	      parse_config_options_buffer_attr (&into_settings->pulseaudio.buffer_attr,
 						get_config_token);
 	    }
 	  else
@@ -471,7 +472,7 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
 
   settings->pulseaudio.stream = pa_stream_new_with_proplist (settings->pulseaudio.context,
 								 settings->stream_name,
-						   &settings->sample_spec,
+						   &settings->pulseaudio.sample_spec,
 						   NULL,
 						   my_stream_proplist);
 
@@ -500,9 +501,9 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
     fprintf (
 	stderr,
 	"Pulse I/O::buffer_attr: maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
-	settings->buffer_attr.maxlength, settings->buffer_attr.tlength,
-	settings->buffer_attr.prebuf, settings->buffer_attr.minreq,
-	settings->buffer_attr.fragsize);
+	settings->pulseaudio.buffer_attr.maxlength, settings->pulseaudio.buffer_attr.tlength,
+	settings->pulseaudio.buffer_attr.prebuf, settings->pulseaudio.buffer_attr.minreq,
+	settings->pulseaudio.buffer_attr.fragsize);
 
   pa_stream_flags_t my_stream_flags = PA_STREAM_START_UNMUTED;
   my_stream_flags |= PA_STREAM_ADJUST_LATENCY;
@@ -510,7 +511,7 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
   if (stream_direction == PA_STREAM_RECORD)
     {
       if (pa_stream_connect_record (settings->pulseaudio.stream, settings->device_name,
-				    &settings->buffer_attr, my_stream_flags)
+				    &settings->pulseaudio.buffer_attr, my_stream_flags)
 	  != 0)
 	{
 	  fprintf (stderr,
@@ -525,7 +526,7 @@ _pa_stream_open (bfio_pulse_settings_t *settings)
       pa_stream *sync_stream = NULL;
 
       if (pa_stream_connect_playback (settings->pulseaudio.stream, settings->device_name,
-				      &settings->buffer_attr, my_stream_flags,
+				      &settings->pulseaudio.buffer_attr, my_stream_flags,
 				      volume, sync_stream) != 0)
 	{
 	  fprintf (stderr,
@@ -737,22 +738,22 @@ bfio_preinit (int *version_major, int *version_minor, int
 
   const pa_sample_format_t pa_sample_format = detect_pa_sample_format (
       *sample_format);
-  if (device[device_count].sample_format == PA_SAMPLE_INVALID)
+  if (pa_sample_format == PA_SAMPLE_INVALID)
     {
       fprintf (stderr,
 	       "Pulse I/O: Could not find appropriate sample-format for PA.\n");
       return -1;
     }
 
-  device[device_count].sample_spec.format = pa_sample_format;
-  device[device_count].sample_spec.rate = sample_rate;
-  device[device_count].sample_spec.channels = open_channels;
+  device[device_count].pulseaudio.sample_spec.format = pa_sample_format;
+  device[device_count].pulseaudio.sample_spec.rate = sample_rate;
+  device[device_count].pulseaudio.sample_spec.channels = open_channels;
 
-  device[device_count].buffer_attr.maxlength = -1;
-  device[device_count].buffer_attr.tlength = -1;
-  device[device_count].buffer_attr.prebuf = -1;
-  device[device_count].buffer_attr.minreq = -1;
-  device[device_count].buffer_attr.fragsize = -1;
+  device[device_count].pulseaudio.buffer_attr.maxlength = -1;
+  device[device_count].pulseaudio.buffer_attr.tlength = -1;
+  device[device_count].pulseaudio.buffer_attr.prebuf = -1;
+  device[device_count].pulseaudio.buffer_attr.minreq = -1;
+  device[device_count].pulseaudio.buffer_attr.fragsize = -1;
 
   /*
    * Set low-latency buffer-attribs if none configured
@@ -760,14 +761,14 @@ bfio_preinit (int *version_major, int *version_minor, int
    * https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/Developer/Clients/LatencyControl/
    * https://www.freedesktop.org/software/pulseaudio/doxygen/streams.html
    */
-  uint32_t nbytes = 4096 * pa_sample_size (&device[device_count].sample_spec);
+  uint32_t nbytes = 4096 * pa_sample_size (&device[device_count].pulseaudio.sample_spec);
   if (io == BF_IN)
     {
-      device[device_count].buffer_attr.fragsize = nbytes;
+      device[device_count].pulseaudio.buffer_attr.fragsize = nbytes;
     }
   else if (io == BF_OUT)
     {
-      device[device_count].buffer_attr.tlength = nbytes;
+      device[device_count].pulseaudio.buffer_attr.tlength = nbytes;
     }
   else
     {
