@@ -57,7 +57,6 @@ static pulseaudio_t pulseaudio;
 typedef struct bfio_pulse_settings
 {
   // BruteFIR value
-  int io;
   uint8_t device_no;	// enumerate device
 
   // PulseAUdio values
@@ -65,6 +64,8 @@ typedef struct bfio_pulse_settings
   char *app_name;       // The name of this application as shown in PA
   char *device_name;	// Device-name to connect stream to, or NULL for default
   char *stream_name;    // The stream-name as shown in PA
+
+  pa_direction_t io;
 
   pulseaudio_t pulseaudio;
 } bfio_pulse_settings_t;
@@ -281,58 +282,11 @@ _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
 
 }
 
-/**
- * Called when the state of a stream changes.
- */
 static void
-_pa_stream_state_cb (pa_stream *p, void *userdata)
-{
-  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
-
-  pa_stream_state_t state = pa_stream_get_state (p);
-  switch (state)
-    {
-    case PA_STREAM_UNCONNECTED: /**< The stream is not yet connected to any sink or source */
-      if (debug)
-	fprintf (stderr,
-		 "Pulse I/O::stream unconnected, device: %d, state: %d.\n",
-		 settings->device_no, state);
-      break;
-    case PA_STREAM_CREATING: /**< The stream is being created */
-      if (debug)
-	fprintf (stderr, "Pulse I/O::stream creating, device: %d, state: %d.\n",
-		 settings->device_no, state);
-      break;
-    case PA_STREAM_READY: /**< The stream is established, you may pass audio data to it now */
-      if (debug)
-	fprintf (stderr, "Pulse I/O::stream ready, device: %d, state: %d.\n",
-		 settings->device_no, state);
-      break;
-    case PA_STREAM_FAILED: /**< An error occurred that made the stream invalid */
-      if (debug)
-	fprintf (stderr, "Pulse I/O::stream failed, device: %d, state: %d.\n",
-		 settings->device_no, state);
-      break;
-    case PA_STREAM_TERMINATED: /**< The stream has been terminated cleanly */
-      if (debug)
-	fprintf (stderr,
-		 "Pulse I/O::stream terminated, device: %d, state: %d.\n",
-		 settings->device_no, state);
-      break;
-    default:
-      // should not happen, but who knows
-      fprintf (stderr,
-	       "Pulse I/O::stream ERROR, unkown device: %d, state: %d.\n",
-	       settings->device_no, state);
-      break;
-    }
-}
-
-static void
-_pa_free_cb (void *p)
+_pa_stream_free_cb (void *p)
 {
   if (debug)
-    fprintf (stderr, "Pulse I/O::stream free.\n");
+    fprintf (stderr, "Pulse I/O::_pa_stream_free_cb free.\n");
 
 }
 
@@ -348,35 +302,27 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
     fprintf (stderr, "Pulse I/O::stream write, device: %d, nbytes: %d.\n",
 	       settings->device_no, (int) nbytes);
 
-  if (settings->io == BF_IN)
-    {
-      fprintf (stderr, "Pulse I/O::stream can NOT write on output-stream.\n");
-      return;
-    }
+  void *bf_buffers;
 
-  void *bf_buffers = malloc (nbytes);
-
+//  int bf_state_count[2] = { 0, 2 };
 //  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
 //  BF_CALLBACK_EVENT_NORMAL);
 
-  if (pa_stream_begin_write (p, bf_buffers, &nbytes) < 0)
+  if (pa_stream_begin_write (p, &bf_buffers, &nbytes) < 0)
     {
-      fprintf (stderr, "Pulse I/O: error writing output-stream, code %d.\n",
-	       pa_context_errno (pa_stream_get_context (p)));
+      fprintf (stderr, "Pulse I/O: error beginning to write output-stream, code %d.\n");
       return;
     }
 
   int64_t offset = 0;
-  int err = pa_stream_write (p, bf_buffers, nbytes, _pa_free_cb, offset,
-  PA_SEEK_RELATIVE);
+  int err = pa_stream_write (p, bf_buffers, nbytes, NULL, 0, PA_SEEK_RELATIVE);
   if (err < 0)
     {
+      int err = pa_context_errno (pa_stream_get_context (p));
       fprintf (stderr, "Pulse I/O: error writing output-stream, code %d.\n",
-	       pa_context_errno (pa_stream_get_context (p)));
+	       pa_strerror(err));
       return;
     }
-
-  pa_stream_drop (p);
 }
 
 /**
@@ -391,30 +337,71 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
     fprintf (stderr, "Pulse I/O::stream read, device: %d, nbytes: %d.\n",
 	     settings->device_no, (int) nbytes);
 
-  if (settings->io == BF_OUT)
-    {
-      fprintf (
-	  stderr,
-	  "Pulse I/O::stream can NOT read on input-stream, device: %d.\n",
-	  settings->device_no);
-      return;
-    }
-
   void *bf_buffers = malloc (nbytes);
   int err = pa_stream_peek (p, bf_buffers, &nbytes);
-  if (err < 0)
+  if (err != 0)
     {
+      int err = pa_context_errno (pa_stream_get_context (p));
       fprintf (stderr,
 	       "Pulse I/O: error reading input-stream, device: %d, code: %d.\n",
 	       settings->device_no,
-	       pa_context_errno (pa_stream_get_context (p)));
+	       pa_strerror (err));
       return;
     }
 
-  //  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
-  //  BF_CALLBACK_EVENT_NORMAL);
+//  //  int bf_state_count[2] = { 2, 0 };
+//  //  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
+//  //  BF_CALLBACK_EVENT_NORMAL);
 
   pa_stream_drop (p);
+}
+
+/**
+ * Called when the state of a stream changes.
+ */
+static void
+_pa_stream_state_cb (pa_stream *p, void *userdata)
+{
+  bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
+
+  pa_stream_state_t state = pa_stream_get_state (p);
+
+  if (debug)
+	fprintf (stderr,
+		 "Pulse I/O::_pa_stream_state_cb, device: %d, state: %d.\n",
+		 settings->device_no, state);
+
+  switch (state)
+    {
+    case PA_STREAM_UNCONNECTED: /**< The stream is not yet connected to any sink or source */
+      break;
+    case PA_STREAM_CREATING: /**< The stream is being created */
+      break;
+    case PA_STREAM_READY: /**< The stream is established, you may pass audio data to it now */
+
+      if (settings->io == PA_DIRECTION_INPUT)
+        {
+          pa_stream_set_read_callback (settings->pulseaudio.stream,
+    				   _pa_stream_read_cb, settings);
+        }
+      else
+        {
+          pa_stream_set_write_callback (settings->pulseaudio.stream,
+    				    _pa_stream_write_cb, settings);
+        }
+
+      break;
+    case PA_STREAM_FAILED: /**< An error occurred that made the stream invalid */
+
+//      _bf_process_callback(NULL, NULL, NULL, 0, BF_CALLBACK_EVENT_ERROR);
+
+      break;
+    case PA_STREAM_TERMINATED: /**< The stream has been terminated cleanly */
+
+//      _bf_process_callback(NULL, NULL, NULL, 0, BF_CALLBACK_EVENT_ERROR);
+
+      break;
+    }
 }
 
 /**
@@ -423,7 +410,7 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
 static void
 _pa_stream_overflow_cb (pa_stream *p, void *userdata)
 {
-  fprintf (stderr, "Pulse I/O: overflow CHECK.\n");
+  fprintf (stderr, "Pulse I/O:_pa_stream_overflow_cb CHECK.\n");
 
 }
 
@@ -433,7 +420,7 @@ _pa_stream_overflow_cb (pa_stream *p, void *userdata)
 static void
 _pa_stream_underflow_cb (pa_stream *p, void *userdata)
 {
-  fprintf (stderr, "Pulse I/O: underflow CHECK.\n");
+  fprintf (stderr, "Pulse I/O:_pa_stream_underflow_cb CHECK.\n");
 
 }
 
@@ -443,7 +430,7 @@ _pa_stream_underflow_cb (pa_stream *p, void *userdata)
 static void
 _pa_stream_latency_update_cb (pa_stream *p, void *userdata)
 {
-  fprintf (stderr, "Pulse I/O: latency CHECK.\n");
+  fprintf (stderr, "Pulse I/O:_pa_stream_latency_update_cb CHECK.\n");
 
 }
 
@@ -453,14 +440,14 @@ _pa_stream_latency_update_cb (pa_stream *p, void *userdata)
 static void
 _pa_stream_moved_cb (pa_stream *p, void *userdata)
 {
-  fprintf (stderr, "Pulse I/O: moved CHECK.\n");
+  fprintf (stderr, "Pulse I/O:_pa_stream_moved_cb CHECK.\n");
 
 }
 
 static void
 _pa_stream_suspended_cb (pa_stream *p, void *userdata)
 {
-  fprintf (stderr, "Pulse I/O: suspended.\n");
+  fprintf (stderr, "Pulse I/O:_pa_stream_suspended_cb.\n");
 
 }
 
@@ -471,7 +458,7 @@ static void
 _pa_stream_buffer_attr_cb (pa_stream *p, void *userdata)
 {
   if (debug)
-    fprintf (stderr, "Pulse I/O: buffer-attr.\n");
+    fprintf (stderr, "Pulse I/O:_pa_stream_buffer_attr_cb.\n");
 
 }
 
@@ -481,8 +468,8 @@ _pa_stream_buffer_attr_cb (pa_stream *p, void *userdata)
 static int
 init_pulseaudio_stream (bfio_pulse_settings_t *settings)
 {
-  pa_direction_t stream_direction =
-      (settings->io == BF_OUT) ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
+  if (debug)
+    fprintf (stderr, "Pulse I/O:init_pulseaudio_stream\n");
 
   pa_proplist *my_stream_proplist = pa_proplist_new ();
 
@@ -491,17 +478,6 @@ init_pulseaudio_stream (bfio_pulse_settings_t *settings)
       &settings->pulseaudio.sample_spec,
       NULL,
       my_stream_proplist);
-
-  if (stream_direction == PA_DIRECTION_OUTPUT)
-    {
-      pa_stream_set_write_callback (settings->pulseaudio.stream,
-				    _pa_stream_write_cb, settings);
-    }
-  else
-    {
-      pa_stream_set_read_callback (settings->pulseaudio.stream,
-				   _pa_stream_read_cb, settings);
-    }
 
   pa_stream_set_event_callback (settings->pulseaudio.stream,
 				_pa_stream_event_cb, settings);
@@ -535,20 +511,21 @@ init_pulseaudio_stream (bfio_pulse_settings_t *settings)
   pa_stream_flags_t my_stream_flags = PA_STREAM_START_UNMUTED;
   my_stream_flags |= PA_STREAM_ADJUST_LATENCY;
 
-  if (stream_direction == PA_DIRECTION_INPUT)
+  if (settings->io == PA_DIRECTION_INPUT)
     {
       if (pa_stream_connect_record (settings->pulseaudio.stream,
 				    settings->device_name,
 				    &settings->pulseaudio.buffer_attr,
 				    my_stream_flags) != 0)
 	{
+	  int err = pa_context_errno (settings->pulseaudio.context);
 	  fprintf (stderr,
-		   "Pulse I/O: error connecting recording-stream, code %d.\n",
-		   pa_context_errno (settings->pulseaudio.context));
+		   "Pulse I/O: error connecting recording-stream, msg: \"%s\".\n",
+		   pa_strerror(err));
 	  return -1;
 	}
     }
-  else if (stream_direction == PA_DIRECTION_OUTPUT)
+  else if (settings->io == PA_DIRECTION_OUTPUT)
     {
       pa_cvolume *volume = NULL;
       pa_stream *sync_stream = NULL;
@@ -593,60 +570,19 @@ _pa_context_state_cb (pa_context *c, void *userdata)
   switch (state)
     {
     case PA_CONTEXT_UNCONNECTED: /**< The context hasn't been connected yet */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb not connected, device: %d, state: %d.\n",
-	    settings->device_no, state);
       break;
     case PA_CONTEXT_CONNECTING: /**< A connection is being established */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb connecting, device: %d, state: %d.\n",
-	    settings->device_no, state);
       break;
     case PA_CONTEXT_AUTHORIZING: /**< The client is authorizing itself to the daemon */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb authorizing, device: %d, state: %d.\n",
-	    settings->device_no, state);
       break;
     case PA_CONTEXT_SETTING_NAME: /**< The client is passing its application name to the daemon */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb setting name, device: %d, state: %d.\n",
-	    settings->device_no, state);
       break;
     case PA_CONTEXT_READY: /**< The connection is established, the context is ready to execute operations */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb ready, device: %d, state: %d.\n",
-	    settings->device_no, state);
       init_pulseaudio_stream (settings);
       break;
     case PA_CONTEXT_FAILED: /**< The connection failed or was disconnected */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb failed, device: %d, state: %d.\n",
-	    settings->device_no, state);
       break;
     case PA_CONTEXT_TERMINATED: /**< The connection was terminated cleanly */
-      if (debug)
-	fprintf (
-	    stderr,
-	    "Pulse I/O::_pa_context_state_cb terminated, device: %d, state: %d.\n",
-	    settings->device_no, state);
-      break;
-    default:
-      fprintf (
-	  stderr,
-	  "Pulse I/O::_pa_context_state_cb UNKOWN device: %d, state: %d.\n",
-	  settings->device_no, state);
       break;
     }
 }
@@ -776,7 +712,7 @@ bfio_preinit (int *version_major, int *version_minor, int
       return NULL;
     }
 
-  device[device_count].io = io;
+  device[device_count].io = io == BF_IN ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
   device[device_count].device_no = device_count;
 
   if (parse_config_options (&device[device_count], get_config_token) < 0)
