@@ -282,6 +282,12 @@ _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
 
 }
 
+static void
+_pa_stream_free_cb(pa_stream *p)
+{
+  // all stream data written
+}
+
 /**
  * Called when the stream can be written to.
  */
@@ -302,19 +308,19 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
       return;
     }
 
-  void *out_state[BF_MAXCHANNELS] =
+  void *active_state[BF_MAXCHANNELS] =
     { settings->bf_callback_state, };
 
   void **callback_states[2];
   callback_states[BF_IN] = NULL;
-  callback_states[BF_OUT] = out_state;
+  callback_states[BF_OUT] = active_state;
 
-  void *out_buffer[BF_MAXCHANNELS] =
+  void *output_buffer[BF_MAXCHANNELS] =
     { data, };
 
   void **buffers[2];
   buffers[BF_IN] = NULL;
-  buffers[BF_OUT] = out_buffer;
+  buffers[BF_OUT] = output_buffer;
 
   int state_count[2] =
     { 0, 1 };
@@ -323,7 +329,7 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
   BF_CALLBACK_EVENT_NORMAL);
 
   int64_t offset = 0;
-  if (pa_stream_write (p, data, nbytes, NULL, offset, PA_SEEK_RELATIVE) < 0)
+  if (pa_stream_write (p, data, nbytes, _pa_stream_free_cb, offset, PA_SEEK_RELATIVE) < 0)
     {
       int err = pa_context_errno (pa_stream_get_context (p));
       fprintf (stderr, "Pulse I/O: error writing output-stream, code %s.\n",
