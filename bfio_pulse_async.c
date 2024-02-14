@@ -267,143 +267,6 @@ detect_pa_sample_format (const int bf_sample_format)
 }
 
 /**
- * Open a stream for given context.
- */
-static int
-init_pulseaudio_stream (bfio_pulse_settings_t *settings)
-{
-  pa_direction_t stream_direction =
-      (settings->io == BF_OUT) ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
-
-  pa_proplist *my_stream_proplist = pa_proplist_new ();
-
-  settings->pulseaudio.stream = pa_stream_new_with_proplist (
-      settings->pulseaudio.context, settings->stream_name,
-      &settings->pulseaudio.sample_spec,
-      NULL,
-      my_stream_proplist);
-
-  if (stream_direction == PA_DIRECTION_OUTPUT)
-    {
-      pa_stream_set_write_callback (settings->pulseaudio.stream,
-				    _pa_stream_write_cb, settings);
-    }
-  else
-    {
-      pa_stream_set_read_callback (settings->pulseaudio.stream,
-				   _pa_stream_read_cb, settings);
-    }
-
-  pa_stream_set_event_callback (settings->pulseaudio.stream,
-				_pa_stream_event_cb, settings);
-  pa_stream_set_state_callback (settings->pulseaudio.stream,
-				_pa_stream_state_cb, settings);
-
-  pa_stream_set_overflow_callback (settings->pulseaudio.stream,
-				   _pa_stream_overflow_cb, settings);
-  pa_stream_set_underflow_callback (settings->pulseaudio.stream,
-				    _pa_stream_underflow_cb, settings);
-  pa_stream_set_latency_update_callback (settings->pulseaudio.stream,
-					 _pa_stream_latency_update_cb,
-					 settings);
-  pa_stream_set_moved_callback (settings->pulseaudio.stream,
-				_pa_stream_moved_cb, settings);
-  pa_stream_set_suspended_callback (settings->pulseaudio.stream,
-				    _pa_stream_suspended_cb, settings);
-  pa_stream_set_buffer_attr_callback (settings->pulseaudio.stream,
-				      _pa_stream_buffer_attr_cb, settings);
-
-  if (debug)
-    fprintf (
-	stderr,
-	"Pulse I/O::buffer_attr: maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
-	settings->pulseaudio.buffer_attr.maxlength,
-	settings->pulseaudio.buffer_attr.tlength,
-	settings->pulseaudio.buffer_attr.prebuf,
-	settings->pulseaudio.buffer_attr.minreq,
-	settings->pulseaudio.buffer_attr.fragsize);
-
-  pa_stream_flags_t my_stream_flags = PA_STREAM_START_UNMUTED;
-  my_stream_flags |= PA_STREAM_ADJUST_LATENCY;
-
-  if (stream_direction == PA_DIRECTION_INPUT)
-    {
-      if (pa_stream_connect_record (settings->pulseaudio.stream,
-				    settings->device_name,
-				    &settings->pulseaudio.buffer_attr,
-				    my_stream_flags) != 0)
-	{
-	  fprintf (stderr,
-		   "Pulse I/O: error connecting recording-stream, code %d.\n",
-		   pa_context_errno (settings->pulseaudio.context));
-	  return -1;
-	}
-    }
-  else if (stream_direction == PA_DIRECTION_OUTPUT)
-    {
-      pa_cvolume *volume = NULL;
-      pa_stream *sync_stream = NULL;
-
-      if (pa_stream_connect_playback (settings->pulseaudio.stream,
-				      settings->device_name,
-				      &settings->pulseaudio.buffer_attr,
-				      my_stream_flags, volume, sync_stream)
-	  != 0)
-	{
-	  fprintf (stderr,
-		   "Pulse I/O: error connecting playback-stream, code %d.\n",
-		   pa_context_errno (settings->pulseaudio.context));
-	  return -1;
-	}
-    }
-  else
-    {
-      fprintf ( stderr,
-	       "Pulse I/O: module could not determine stream-direction.\n");
-      return -1;
-    }
-
-  return 0;
-}
-
-/**
- * Connect to PA-server.
- */
-static int
-init_pulseaudio (bfio_pulse_settings_t *settings)
-{
-  settings->pulseaudio.mainloop = pa_threaded_mainloop_new ();
-  settings->pulseaudio.api = pa_threaded_mainloop_get_api (
-	  settings->pulseaudio.mainloop);
-
-  pa_proplist *my_pa_ctx_proplist = pa_proplist_new ();
-  settings->pulseaudio.context = pa_context_new_with_proplist (
-	  settings->pulseaudio.api, "my context", my_pa_ctx_proplist);
-
-  pa_context_set_state_callback (settings->pulseaudio.context,
-				     _pa_context_state_cb, settings);
-  pa_context_set_subscribe_callback (settings->pulseaudio.context,
-					 _pa_context_subscribe_cb, settings);
-  pa_context_set_event_callback (settings->pulseaudio.context,
-				     _pa_context_event_cb, settings);
-
-  pa_context_flags_t my_pa_context_flags = PA_CONTEXT_NOFLAGS;
-
-  pa_spawn_api *my_ctx_spawn_api =
-	{ };
-
-  if (pa_context_connect (settings->pulseaudio.context, settings->server,
-			      my_pa_context_flags, my_ctx_spawn_api) < 0)
-	{
-	  fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
-		   pa_context_errno (settings->pulseaudio.context));
-	  return -1;
-	}
-
-  return 0;
-}
-
-/**
  * Callback
  */
 static void
@@ -613,6 +476,106 @@ _pa_stream_buffer_attr_cb (pa_stream *p, void *userdata)
 }
 
 /**
+ * Open a stream for given context.
+ */
+static int
+init_pulseaudio_stream (bfio_pulse_settings_t *settings)
+{
+  pa_direction_t stream_direction =
+      (settings->io == BF_OUT) ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
+
+  pa_proplist *my_stream_proplist = pa_proplist_new ();
+
+  settings->pulseaudio.stream = pa_stream_new_with_proplist (
+      settings->pulseaudio.context, settings->stream_name,
+      &settings->pulseaudio.sample_spec,
+      NULL,
+      my_stream_proplist);
+
+  if (stream_direction == PA_DIRECTION_OUTPUT)
+    {
+      pa_stream_set_write_callback (settings->pulseaudio.stream,
+				    _pa_stream_write_cb, settings);
+    }
+  else
+    {
+      pa_stream_set_read_callback (settings->pulseaudio.stream,
+				   _pa_stream_read_cb, settings);
+    }
+
+  pa_stream_set_event_callback (settings->pulseaudio.stream,
+				_pa_stream_event_cb, settings);
+  pa_stream_set_state_callback (settings->pulseaudio.stream,
+				_pa_stream_state_cb, settings);
+
+  pa_stream_set_overflow_callback (settings->pulseaudio.stream,
+				   _pa_stream_overflow_cb, settings);
+  pa_stream_set_underflow_callback (settings->pulseaudio.stream,
+				    _pa_stream_underflow_cb, settings);
+  pa_stream_set_latency_update_callback (settings->pulseaudio.stream,
+					 _pa_stream_latency_update_cb,
+					 settings);
+  pa_stream_set_moved_callback (settings->pulseaudio.stream,
+				_pa_stream_moved_cb, settings);
+  pa_stream_set_suspended_callback (settings->pulseaudio.stream,
+				    _pa_stream_suspended_cb, settings);
+  pa_stream_set_buffer_attr_callback (settings->pulseaudio.stream,
+				      _pa_stream_buffer_attr_cb, settings);
+
+  if (debug)
+    fprintf (
+	stderr,
+	"Pulse I/O::buffer_attr: maxlength: %d, tlength: %d, prebuf: %d, minreq: %d, fragsize: %d\n",
+	settings->pulseaudio.buffer_attr.maxlength,
+	settings->pulseaudio.buffer_attr.tlength,
+	settings->pulseaudio.buffer_attr.prebuf,
+	settings->pulseaudio.buffer_attr.minreq,
+	settings->pulseaudio.buffer_attr.fragsize);
+
+  pa_stream_flags_t my_stream_flags = PA_STREAM_START_UNMUTED;
+  my_stream_flags |= PA_STREAM_ADJUST_LATENCY;
+
+  if (stream_direction == PA_DIRECTION_INPUT)
+    {
+      if (pa_stream_connect_record (settings->pulseaudio.stream,
+				    settings->device_name,
+				    &settings->pulseaudio.buffer_attr,
+				    my_stream_flags) != 0)
+	{
+	  fprintf (stderr,
+		   "Pulse I/O: error connecting recording-stream, code %d.\n",
+		   pa_context_errno (settings->pulseaudio.context));
+	  return -1;
+	}
+    }
+  else if (stream_direction == PA_DIRECTION_OUTPUT)
+    {
+      pa_cvolume *volume = NULL;
+      pa_stream *sync_stream = NULL;
+
+      if (pa_stream_connect_playback (settings->pulseaudio.stream,
+				      settings->device_name,
+				      &settings->pulseaudio.buffer_attr,
+				      my_stream_flags, volume, sync_stream)
+	  != 0)
+	{
+	  fprintf (stderr,
+		   "Pulse I/O: error connecting playback-stream, code %d.\n",
+		   pa_context_errno (settings->pulseaudio.context));
+	  return -1;
+	}
+    }
+  else
+    {
+      fprintf ( stderr,
+	       "Pulse I/O: module could not determine stream-direction.\n");
+      return -1;
+    }
+
+  return 0;
+}
+
+/**
  * Callback whenever pulseaudio-context/-connection changes state.
  */
 static void
@@ -745,6 +708,43 @@ _pa_context_subscribe_cb (pa_context *c, pa_subscription_event_type_t t,
     default:
       break;
     }
+}
+
+/**
+ * Connect to PA-server.
+ */
+static int
+init_pulseaudio (bfio_pulse_settings_t *settings)
+{
+  settings->pulseaudio.mainloop = pa_threaded_mainloop_new ();
+  settings->pulseaudio.api = pa_threaded_mainloop_get_api (
+	  settings->pulseaudio.mainloop);
+
+  pa_proplist *my_pa_ctx_proplist = pa_proplist_new ();
+  settings->pulseaudio.context = pa_context_new_with_proplist (
+	  settings->pulseaudio.api, "my context", my_pa_ctx_proplist);
+
+  pa_context_set_state_callback (settings->pulseaudio.context,
+				     _pa_context_state_cb, settings);
+  pa_context_set_subscribe_callback (settings->pulseaudio.context,
+					 _pa_context_subscribe_cb, settings);
+  pa_context_set_event_callback (settings->pulseaudio.context,
+				     _pa_context_event_cb, settings);
+
+  pa_context_flags_t my_pa_context_flags = PA_CONTEXT_NOFLAGS;
+
+  pa_spawn_api *my_ctx_spawn_api =
+	{ };
+
+  if (pa_context_connect (settings->pulseaudio.context, settings->server,
+			      my_pa_context_flags, my_ctx_spawn_api) < 0)
+	{
+	  fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
+		   pa_context_errno (settings->pulseaudio.context));
+	  return -1;
+	}
+
+  return 0;
 }
 
 int
