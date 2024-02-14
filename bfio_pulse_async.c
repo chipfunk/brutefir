@@ -52,12 +52,6 @@ typedef struct
 
 } pulseaudio_t;
 
-static pulseaudio_t pulseaudio;
-
-typedef struct {
-  void *state;
-} bf_callback_t;
-
 typedef struct
 {
   // BruteFIR value
@@ -73,8 +67,7 @@ typedef struct
 
   pulseaudio_t pulseaudio;
 
-  bf_callback_t bf_callback;
-
+  void *bf_callback_state;
 } bfio_pulse_settings_t;
 
 bfio_pulse_settings_t device[BF_MAXMODULES];
@@ -289,14 +282,6 @@ _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
 
 }
 
-static void
-_pa_stream_free_cb (void *p)
-{
-  if (debug)
-    fprintf (stderr, "Pulse I/O::_pa_stream_free_cb free.\n");
-
-}
-
 /**
  * Called when the stream can be written to.
  */
@@ -306,28 +291,43 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
   bfio_pulse_settings_t *settings = (bfio_pulse_settings_t*) userdata;
 
   if (debug)
-    fprintf (stderr, "Pulse I/O::stream write, device: %d, nbytes: %d.\n",
-	       settings->device_no, (int) nbytes);
+    fprintf (stderr, "Pulse I/O::stream write, device: %d, nbytes: %lu.\n",
+	     settings->device_no, nbytes);
 
-  void *bf_buffers;
+  void *data;
 
-//  int bf_state_count[2] = { 0, 2 };
-//  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
-//  BF_CALLBACK_EVENT_NORMAL);
-
-  if (pa_stream_begin_write (p, &bf_buffers, &nbytes) < 0)
+  if (pa_stream_begin_write (p, &data, &nbytes) < 0)
     {
-      fprintf (stderr, "Pulse I/O: error beginning to write output-stream, code %d.\n");
+      fprintf (stderr, "Pulse I/O: error begin writing output-stream.\n");
       return;
     }
 
+  void *out_state[BF_MAXCHANNELS] =
+    { settings->bf_callback_state, };
+
+  void **callback_states[2];
+  callback_states[BF_IN] = NULL;
+  callback_states[BF_OUT] = out_state;
+
+  void *out_buffer[BF_MAXCHANNELS] =
+    { data, };
+
+  void **buffers[2];
+  buffers[BF_IN] = NULL;
+  buffers[BF_OUT] = out_buffer;
+
+  int state_count[2] =
+    { 0, 1 };
+
+  _bf_process_callback (callback_states, state_count, buffers, 4096,
+  BF_CALLBACK_EVENT_NORMAL);
+
   int64_t offset = 0;
-  int err = pa_stream_write (p, bf_buffers, nbytes, NULL, 0, PA_SEEK_RELATIVE);
-  if (err < 0)
+  if (pa_stream_write (p, data, nbytes, NULL, offset, PA_SEEK_RELATIVE) < 0)
     {
       int err = pa_context_errno (pa_stream_get_context (p));
-      fprintf (stderr, "Pulse I/O: error writing output-stream, code %d.\n",
-	       pa_strerror(err));
+      fprintf (stderr, "Pulse I/O: error writing output-stream, code %s.\n",
+	       pa_strerror (err));
       return;
     }
 }
@@ -344,22 +344,50 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
     fprintf (stderr, "Pulse I/O::stream read, device: %d, nbytes: %d.\n",
 	     settings->device_no, (int) nbytes);
 
-  void *bf_buffers = malloc (nbytes);
+  const void *data;
 
-  int err = pa_stream_peek (p, bf_buffers, &nbytes);
-  if (err != 0)
+  if (pa_stream_peek (p, &data, &nbytes) < 0)
     {
       int err = pa_context_errno (pa_stream_get_context (p));
       fprintf (stderr,
-	       "Pulse I/O: error reading input-stream, device: %d, code: %d.\n",
-	       settings->device_no,
-	       pa_strerror (err));
+	       "Pulse I/O: error reading input-stream, device: %d, code: %s.\n",
+	       settings->device_no, pa_strerror (err));
       return;
     }
 
-    int bf_state_count[2] = { 1, 0 };
-    int xyz = _bf_process_callback (settings->bf_callback.state, bf_state_count, bf_buffers, nbytes,
-    BF_CALLBACK_EVENT_NORMAL);
+  if (data == NULL)
+    {
+      if (nbytes == 0)
+	{
+	  // buffer is empty
+	  return;
+	}
+      else
+	{
+	  // found a whole
+	  return;
+	}
+    }
+
+  void *in_state[BF_MAXCHANNELS] =
+    { settings->bf_callback_state, };
+
+  void **callback_states[2];
+  callback_states[BF_IN] = in_state;
+  callback_states[BF_OUT] = NULL;
+
+  void *in_bufs[BF_MAXCHANNELS] =
+    { data, };
+
+  void **buffers[2];
+  buffers[BF_IN] = in_bufs;
+  buffers[BF_OUT] = NULL;
+
+  int state_count[2] =
+    { 1, 0 };
+
+  _bf_process_callback (callback_states, state_count, buffers, 4096,
+  BF_CALLBACK_EVENT_NORMAL);
 
   pa_stream_drop (p);
 }
@@ -375,9 +403,8 @@ _pa_stream_state_cb (pa_stream *p, void *userdata)
   pa_stream_state_t state = pa_stream_get_state (p);
 
   if (debug)
-	fprintf (stderr,
-		 "Pulse I/O::_pa_stream_state_cb, device: %d, state: %d.\n",
-		 settings->device_no, state);
+    fprintf (stderr, "Pulse I/O::_pa_stream_state_cb, device: %d, state: %d.\n",
+	     settings->device_no, state);
 
   switch (state)
     {
@@ -388,15 +415,15 @@ _pa_stream_state_cb (pa_stream *p, void *userdata)
     case PA_STREAM_READY: /**< The stream is established, you may pass audio data to it now */
 
       if (settings->io == PA_DIRECTION_INPUT)
-        {
-          pa_stream_set_read_callback (settings->pulseaudio.stream,
-    				   _pa_stream_read_cb, settings);
-        }
+	{
+	  pa_stream_set_read_callback (settings->pulseaudio.stream,
+				       _pa_stream_read_cb, settings);
+	}
       else
-        {
-          pa_stream_set_write_callback (settings->pulseaudio.stream,
-    				    _pa_stream_write_cb, settings);
-        }
+	{
+	  pa_stream_set_write_callback (settings->pulseaudio.stream,
+					_pa_stream_write_cb, settings);
+	}
 
       break;
     case PA_STREAM_FAILED: /**< An error occurred that made the stream invalid */
@@ -527,9 +554,10 @@ init_pulseaudio_stream (bfio_pulse_settings_t *settings)
 				    my_stream_flags) != 0)
 	{
 	  int err = pa_context_errno (settings->pulseaudio.context);
-	  fprintf (stderr,
-		   "Pulse I/O: error connecting recording-stream, msg: \"%s\".\n",
-		   pa_strerror(err));
+	  fprintf (
+	      stderr,
+	      "Pulse I/O: error connecting recording-stream, msg: \"%s\".\n",
+	      pa_strerror (err));
 	  return -1;
 	}
     }
@@ -662,31 +690,31 @@ init_pulseaudio (bfio_pulse_settings_t *settings)
 {
   settings->pulseaudio.mainloop = pa_threaded_mainloop_new ();
   settings->pulseaudio.api = pa_threaded_mainloop_get_api (
-	  settings->pulseaudio.mainloop);
+      settings->pulseaudio.mainloop);
 
   pa_proplist *my_pa_ctx_proplist = pa_proplist_new ();
   settings->pulseaudio.context = pa_context_new_with_proplist (
-	  settings->pulseaudio.api, "my context", my_pa_ctx_proplist);
+      settings->pulseaudio.api, "my context", my_pa_ctx_proplist);
 
   pa_context_set_state_callback (settings->pulseaudio.context,
-				     _pa_context_state_cb, settings);
+				 _pa_context_state_cb, settings);
   pa_context_set_subscribe_callback (settings->pulseaudio.context,
-					 _pa_context_subscribe_cb, settings);
+				     _pa_context_subscribe_cb, settings);
   pa_context_set_event_callback (settings->pulseaudio.context,
-				     _pa_context_event_cb, settings);
+				 _pa_context_event_cb, settings);
 
   pa_context_flags_t my_pa_context_flags = PA_CONTEXT_NOFLAGS;
 
   pa_spawn_api *my_ctx_spawn_api =
-	{ };
+    { };
 
   if (pa_context_connect (settings->pulseaudio.context, settings->server,
-			      my_pa_context_flags, my_ctx_spawn_api) < 0)
-	{
-	  fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
-		   pa_context_errno (settings->pulseaudio.context));
-	  return -1;
-	}
+			  my_pa_context_flags, my_ctx_spawn_api) < 0)
+    {
+      fprintf (stderr, "Pulse I/O: connection error, code %d.\n",
+	       pa_context_errno (settings->pulseaudio.context));
+      return -1;
+    }
 
   return 0;
 }
@@ -708,6 +736,8 @@ bfio_preinit (int *version_major, int *version_minor, int
 
   device[device_count].device_no = device_count;
 
+  device[device_count].io = io == BF_IN ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
+
   *callback_sched_policy = SCHED_FIFO;
   callback_sched_param->sched_priority = 0;
 
@@ -719,9 +749,6 @@ bfio_preinit (int *version_major, int *version_minor, int
 	  *version_major, *version_minor);
       return NULL;
     }
-
-  device[device_count].io = io == BF_IN ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
-  device[device_count].device_no = device_count;
 
   if (parse_config_options (&device[device_count], get_config_token) < 0)
     {
@@ -756,11 +783,12 @@ bfio_preinit (int *version_major, int *version_minor, int
    */
   uint32_t nbytes = 4096
       * pa_sample_size (&device[device_count].pulseaudio.sample_spec);
-  if (io == BF_IN)
+
+  if (device[device_count].io == PA_DIRECTION_OUTPUT)
     {
       device[device_count].pulseaudio.buffer_attr.fragsize = nbytes;
     }
-  else if (io == BF_OUT)
+  else if (device[device_count].io == PA_DIRECTION_INPUT)
     {
       device[device_count].pulseaudio.buffer_attr.tlength = nbytes;
     }
@@ -794,9 +822,11 @@ bfio_init (
     (*process_callback) (void **callback_states[2], int callback_state_count[2],
 			 void **buffers[2], int frame_count, int event))
 {
+  bfio_pulse_settings_t *settings = params;
+
   _bf_process_callback = process_callback;
 
-  device[i].bf_callback.state = callback_state;
+  settings->bf_callback_state = callback_state;
 
   *device_period_size = 4096;
   *isinterleaved = true;
@@ -812,7 +842,7 @@ bfio_synch_start (void)
 
   for (int i = 0; i < device_count; i++)
     {
-      init_pulseaudio(&device[i]);
+      init_pulseaudio (&device[i]);
     }
 
   for (int i = 0; i < device_count; i++)
