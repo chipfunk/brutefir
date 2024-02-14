@@ -338,35 +338,35 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
   if (debug)
     fprintf (stderr, "Pulse I/O::stream write, nbytes: %d.\n", (int) nbytes);
 
-//  if (settings->io == BF_IN)
-//    {
-//      fprintf (stderr, "Pulse I/O::stream can NOT write on record-stream.\n");
-//      return;
-//    }
-//
-//  void *bf_buffers = malloc (nbytes);
-//
-////  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
-////  BF_CALLBACK_EVENT_NORMAL);
-//
-//  if (pa_stream_begin_write (p, bf_buffers, &nbytes) < 0)
-//    {
-//      fprintf (stderr, "Pulse I/O: error writing stream, code %d.\n",
-//	       pa_context_errno (pa_stream_get_context (p)));
-//      return;
-//    }
-//
-//  int64_t offset = 0;
-//  int err = pa_stream_write (p, bf_buffers, nbytes, _pa_free_cb, offset,
-//  PA_SEEK_RELATIVE);
-//  if (err < 0)
-//    {
-//      fprintf (stderr, "Pulse I/O: error reading input-stream, code %d.\n",
-//	       pa_context_errno (pa_stream_get_context (p)));
-//      return;
-//    }
-//
-//  pa_stream_drop (p);
+  if (settings->io == BF_IN)
+    {
+      fprintf (stderr, "Pulse I/O::stream can NOT write on record-stream.\n");
+      return;
+    }
+
+  void *bf_buffers = malloc (nbytes);
+
+//  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
+//  BF_CALLBACK_EVENT_NORMAL);
+
+  if (pa_stream_begin_write (p, bf_buffers, &nbytes) < 0)
+    {
+      fprintf (stderr, "Pulse I/O: error writing stream, code %d.\n",
+	       pa_context_errno (pa_stream_get_context (p)));
+      return;
+    }
+
+  int64_t offset = 0;
+  int err = pa_stream_write (p, bf_buffers, nbytes, _pa_free_cb, offset,
+  PA_SEEK_RELATIVE);
+  if (err < 0)
+    {
+      fprintf (stderr, "Pulse I/O: error reading input-stream, code %d.\n",
+	       pa_context_errno (pa_stream_get_context (p)));
+      return;
+    }
+
+  pa_stream_drop (p);
 }
 
 /**
@@ -380,25 +380,25 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
   if (debug)
     fprintf (stderr, "Pulse I/O::stream read, nbytes: %d.\n", (int) nbytes);
 
-//  if (settings->io == BF_OUT)
-//    {
-//      fprintf (stderr, "Pulse I/O::stream can NOT read on playback-stream.\n");
-//      return;
-//    }
-//
-//  void *bf_buffers = malloc (nbytes);
-//  int err = pa_stream_peek (p, bf_buffers, &nbytes);
-//  if (err < 0)
-//    {
-//      fprintf (stderr, "Pulse I/O: error reading input-stream, code %d.\n",
-//	       pa_context_errno (pa_stream_get_context (p)));
-//      return;
-//    }
-//
-//  pa_stream_drop (p);
-//
-////  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
-////  BF_CALLBACK_EVENT_NORMAL);
+  if (settings->io == BF_OUT)
+    {
+      fprintf (stderr, "Pulse I/O::stream can NOT read on playback-stream.\n");
+      return;
+    }
+
+  void *bf_buffers = malloc (nbytes);
+  int err = pa_stream_peek (p, bf_buffers, &nbytes);
+  if (err < 0)
+    {
+      fprintf (stderr, "Pulse I/O: error reading input-stream, code %d.\n",
+	       pa_context_errno (pa_stream_get_context (p)));
+      return;
+    }
+
+  //  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
+  //  BF_CALLBACK_EVENT_NORMAL);
+
+  pa_stream_drop (p);
 }
 
 /**
