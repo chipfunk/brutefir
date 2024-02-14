@@ -54,7 +54,11 @@ typedef struct
 
 static pulseaudio_t pulseaudio;
 
-typedef struct bfio_pulse_settings
+typedef struct {
+  void *state;
+} bf_callback_t;
+
+typedef struct
 {
   // BruteFIR value
   uint8_t device_no;	// enumerate device
@@ -68,6 +72,9 @@ typedef struct bfio_pulse_settings
   pa_direction_t io;
 
   pulseaudio_t pulseaudio;
+
+  bf_callback_t bf_callback;
+
 } bfio_pulse_settings_t;
 
 bfio_pulse_settings_t device[BF_MAXMODULES];
@@ -338,6 +345,7 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
 	     settings->device_no, (int) nbytes);
 
   void *bf_buffers = malloc (nbytes);
+
   int err = pa_stream_peek (p, bf_buffers, &nbytes);
   if (err != 0)
     {
@@ -349,9 +357,9 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
       return;
     }
 
-//  //  int bf_state_count[2] = { 2, 0 };
-//  //  int xyz = _bf_process_callback (bf_states, bf_state_count, bf_buffers, nbytes,
-//  //  BF_CALLBACK_EVENT_NORMAL);
+    int bf_state_count[2] = { 1, 0 };
+    int xyz = _bf_process_callback (settings->bf_callback.state, bf_state_count, bf_buffers, nbytes,
+    BF_CALLBACK_EVENT_NORMAL);
 
   pa_stream_drop (p);
 }
@@ -787,6 +795,8 @@ bfio_init (
 			 void **buffers[2], int frame_count, int event))
 {
   _bf_process_callback = process_callback;
+
+  device[i].bf_callback.state = callback_state;
 
   *device_period_size = 4096;
   *isinterleaved = true;
