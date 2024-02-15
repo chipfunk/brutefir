@@ -1,8 +1,7 @@
-/*
- * bfio_read_write.c
+/**
+ * Example to show how to implement a BFIO-module using synchronous
+ * read()/write() calls.
  *
- *  Created on: Jan 29, 2024
- *      Author: d00d3
  */
 
 #include <stdbool.h>
@@ -11,7 +10,9 @@
 #include "bfmod.h"
 #include "bfconf.h"
 
-typedef struct {} params_t;
+typedef struct
+{
+} params_t;
 
 void*
 bfio_preinit (int *version_major, int *version_minor, int
