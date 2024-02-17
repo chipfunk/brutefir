@@ -294,8 +294,8 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   if (debug)
     fprintf (
 	stderr,
-	"PipeWire I/O::_pw_filter_process_cb, data: %p, n_samples: %d, state: %d\n",
-	settings->bf_callback_state, position->clock.duration, position->state);
+	"PipeWire I/O::_pw_filter_process_cb, device: %d, data: %p, n_samples: %d, state: %d\n",
+	settings->device_no, settings->bf_callback_state, position->clock.duration, position->state);
 
   struct pw_buffer *pw_buffers[BF_MAXCHANNELS];
 
@@ -313,16 +313,12 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 
   for (int channel = 0; channel < settings->open_channels; channel++)
     {
-      pw_buffers[channel] = pw_filter_dequeue_buffer (
-	  settings->pipewire.port_data[channel]);
+      bf_buffers[io][channel] = pw_filter_get_dsp_buffer(
+	  settings->pipewire.port_data[channel], n_samples);
 
-      if (pw_buffers[channel] == NULL)
+      if (bf_buffers[io][channel] == NULL)
 	{
 	  bf_buffers[io][channel] = &null_buffer;
-	}
-      else
-	{
-	  bf_buffers[io][channel] = pw_buffers[channel]->buffer->datas->data;
 	}
     }
 
@@ -346,15 +342,6 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   const int frames = 1024;
   _bf_process_callback (callback_states, state_count, bf_buffers, frames,
   BF_CALLBACK_EVENT_NORMAL);
-
-  for (int channel = 0; channel < settings->open_channels; channel++)
-    {
-      if (pw_buffers[channel] != NULL)
-	{
-	  pw_filter_queue_buffer (settings->pipewire.port_data[channel],
-				  pw_buffers[channel]);
-	}
-    }
 }
 
 static void
