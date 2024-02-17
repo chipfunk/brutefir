@@ -56,6 +56,7 @@ typedef struct
 {
   // BruteFIR value
   uint8_t device_no;	// enumerate device
+  int open_channels;
 
   // PulseAUdio values
   char *server;         // Name of server to connect to, NULL for default
@@ -308,24 +309,25 @@ _pa_stream_write_cb (pa_stream *p, size_t nbytes, void *userdata)
       return;
     }
 
-  void *active_state[BF_MAXCHANNELS] =
-    { settings->bf_callback_state, };
+  void *active_state[settings->open_channels];
+  active_state[0] = settings->bf_callback_state;
 
   void **callback_states[2];
   callback_states[BF_IN] = NULL;
   callback_states[BF_OUT] = active_state;
 
-  void *output_buffer[BF_MAXCHANNELS] =
-    { data, };
+  void *active_buffer[settings->open_channels];
+  active_buffer[0] = data;
 
   void **buffers[2];
   buffers[BF_IN] = NULL;
-  buffers[BF_OUT] = output_buffer;
+  buffers[BF_OUT] = active_buffer;
 
   int state_count[2] =
     { 0, 1 };
 
-  _bf_process_callback (callback_states, state_count, buffers, 4096,
+  int frames = 4096;
+  _bf_process_callback (callback_states, state_count, buffers, frames,
   BF_CALLBACK_EVENT_NORMAL);
 
   int64_t offset = 0;
@@ -375,18 +377,18 @@ _pa_stream_read_cb (pa_stream *p, size_t nbytes, void *userdata)
 	}
     }
 
-  void *in_state[BF_MAXCHANNELS] =
-    { settings->bf_callback_state, };
+  void *active_state[settings->open_channels];
+  active_state[0] = settings->bf_callback_state;
 
   void **callback_states[2];
-  callback_states[BF_IN] = in_state;
+  callback_states[BF_IN] = active_state;
   callback_states[BF_OUT] = NULL;
 
-  void *in_bufs[BF_MAXCHANNELS] =
-    { data, };
+  void *active_buffer[settings->open_channels];
+  active_buffer[0] = data;
 
   void **buffers[2];
-  buffers[BF_IN] = in_bufs;
+  buffers[BF_IN] = active_buffer;
   buffers[BF_OUT] = NULL;
 
   int state_count[2] =
@@ -741,6 +743,7 @@ bfio_preinit (int *version_major, int *version_minor, int
   debug = _debug;
 
   device[device_count].device_no = device_count;
+  device[device_count].open_channels = open_channels;
 
   device[device_count].io = io == BF_IN ? PA_STREAM_PLAYBACK : PA_STREAM_RECORD;
 
