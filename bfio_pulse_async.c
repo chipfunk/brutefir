@@ -284,7 +284,7 @@ _pa_stream_event_cb (pa_stream *p, const char *name, pa_proplist *pl,
 }
 
 static void
-_pa_stream_free_cb(pa_stream *p)
+_pa_stream_free_cb(void *p)
 {
   // all stream data written
 }
