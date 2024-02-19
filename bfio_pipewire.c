@@ -40,6 +40,7 @@ static bool debug = false;
 static int
 (*_bf_process_callback) (void **states[2], int state_count[2], void **bufs[2],
 			 int frame_count, int event);
+
 typedef struct
 {
   struct pw_context *context;
@@ -311,7 +312,8 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 
   // todo: check and reserve proper amount of memory
   // null-buffer provides empty streams
-  double null_buffer[n_samples] = {};		// endian-ness doesn't matter
+  double null_buffer[n_samples] =
+    { };		// endian-ness doesn't matter
 
   const int io = settings->pipewire.direction == PW_DIRECTION_INPUT ? 0 : 1;
 
@@ -329,11 +331,11 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   bf_buffers[settings->pipewire.direction == PW_DIRECTION_INPUT ? 1 : 0] =
   NULL;
 
-  void *in_state[settings->open_channels] =
-    { settings->bf_callback_state, };
+  void *in_state[settings->open_channels];
+  in_state[0] = settings->bf_callback_state;
 
-  void *out_state[settings->open_channels] =
-    { settings->bf_callback_state, };
+  void *out_state[settings->open_channels];
+  out_state[0] = settings->bf_callback_state;
 
   void **callback_states[2];
   callback_states[BF_IN] =
@@ -811,6 +813,8 @@ bfio_preinit (int *version_major, int *version_minor, int
   *callback_sched_policy = SCHED_FIFO;
   callback_sched->sched_priority = 3;
 
+  *sample_format = BF_SAMPLE_FORMAT_FLOAT_LE;
+
   if (debug)
     fprintf (stderr, "PipeWire I/O::preinit, device: %d, io: %d\n",
 	     device_count, io);
@@ -895,8 +899,17 @@ bfio_init (
 
   if (used_channels != open_channels)
     {
-      fprintf (stderr, "JACK I/O: Open channels must be equal to used "
+      fprintf (stderr,
+	       "PipeWire I/O::init: Open channels must be equal to used "
 	       "channels for this I/O module.\n");
+      return -1;
+    }
+
+  if (sample_format != BF_SAMPLE_FORMAT_FLOAT_LE)
+    {
+      fprintf (
+	  stderr,
+	  "PipeWire I/O::init: sample format must be BF_SAMPLE_FORMAT_FLOAT_LE.\n");
       return -1;
     }
 
