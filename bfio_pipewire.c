@@ -299,13 +299,11 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 	settings->device_no, settings->bf_callback_state,
 	position->clock.duration, position->state);
 
-  void *in_bufs[BF_MAXCHANNELS] =
-    { };
-  void *out_bufs[BF_MAXCHANNELS] =
-    { };
+  void *in_bufs[BF_MAXCHANNELS], *out_bufs[BF_MAXCHANNELS];
 
-  void **bf_buffers[2] =
-    { in_bufs, out_bufs };
+  void **bf_buffers[2];
+  bf_buffers[BF_IN] = in_bufs;
+  bf_buffers[BF_OUT] = out_bufs;
 
   uint64_t n_samples = 1024;
 
@@ -336,10 +334,8 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
     { settings->bf_callback_state, };
 
   void **callback_states[2];
-  callback_states[BF_IN] =
-      settings->pipewire.direction == PW_DIRECTION_INPUT ? in_state : NULL;
-  callback_states[BF_OUT] =
-      settings->pipewire.direction == PW_DIRECTION_OUTPUT ? out_state : NULL;
+  callback_states[BF_IN] = settings->pipewire.direction == PW_DIRECTION_INPUT ? in_state : NULL;
+  callback_states[BF_OUT] = settings->pipewire.direction == PW_DIRECTION_OUTPUT ? out_state : NULL;
 
   int state_count[2] =
     { settings->pipewire.direction == PW_DIRECTION_INPUT ? 1 : 0,
@@ -845,8 +841,7 @@ bfio_preinit (int *version_major, int *version_minor, int
     }
 
   params->io = io;
-  params->pipewire.direction =
-      io == BF_IN ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT;
+  params->pipewire.direction = io == BF_IN ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT;
   params->device_no = device_count;
   params->sample_rate = sample_rate;
   params->open_channels = open_channels;
