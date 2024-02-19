@@ -311,7 +311,7 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 
   // todo: check and reserve proper amount of memory
   // null-buffer provides empty streams
-  double null_buffer[n_samples];		// endian-ness doesn't matter
+  double null_buffer[n_samples] = {};		// endian-ness doesn't matter
 
   const int io = settings->pipewire.direction == PW_DIRECTION_INPUT ? 0 : 1;
 
