@@ -60,7 +60,7 @@ typedef struct
   void *port_data[BF_MAXCHANNELS];
   struct spa_hook port_listener[BF_MAXCHANNELS];
 
-  int direction;
+  enum pw_direction direction;
 
 } pipewire_t;
 
@@ -841,6 +841,7 @@ bfio_preinit (int *version_major, int *version_minor, int
     }
 
   params->io = io;
+  params->pipewire.direction = io == BF_IN ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT;
   params->device_no = device_count;
   params->sample_rate = sample_rate;
   params->open_channels = open_channels;
