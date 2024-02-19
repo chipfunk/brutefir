@@ -969,7 +969,6 @@ bfio_synch_stop ()
   if (debug)
     fprintf (stderr, "PipeWire I/O::synch_stop.\n");
 
-  pw_thread_loop_stop (main_loop);
   pw_thread_loop_destroy (main_loop);
 
   for (int i = 0; i < device_count; i++)
