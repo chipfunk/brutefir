@@ -299,9 +299,9 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 	settings->device_no, settings->bf_callback_state,
 	position->clock.duration, position->state);
 
-  void *in_bufs[BF_MAXCHANNELS] =
+  void *in_bufs[settings->open_channels] =
     { };
-  void *out_bufs[BF_MAXCHANNELS] =
+  void *out_bufs[settings->open_channels] =
     { };
 
   void **bf_buffers[2] =
@@ -329,10 +329,10 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   bf_buffers[settings->pipewire.direction == PW_DIRECTION_INPUT ? 1 : 0] =
   NULL;
 
-  void *in_state[BF_MAXCHANNELS] =
+  void *in_state[settings->open_channels] =
     { settings->bf_callback_state, };
 
-  void *out_state[BF_MAXCHANNELS] =
+  void *out_state[settings->open_channels] =
     { settings->bf_callback_state, };
 
   void **callback_states[2];
