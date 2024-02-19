@@ -42,9 +42,6 @@ static int
 			 int frame_count, int event);
 typedef struct
 {
-  struct pw_thread_loop *main_loop;
-  struct spa_hook main_loop_listener;
-
   struct pw_context *context;
   struct spa_hook context_listener;
 
@@ -84,6 +81,9 @@ typedef struct
 
 static params_t *device[BF_MAXMODULES];
 static uint8_t device_count = 0;
+
+struct pw_thread_loop *main_loop;
+struct spa_hook main_loop_listener;
 
 typedef void *port_data_t;
 
@@ -676,32 +676,14 @@ init_pipewire_filter (params_t *settings)
 }
 
 static int
-init_pipewire_context (params_t *settings)
+init_pipewire_context (params_t *settings, struct pw_thread_loop *main_loop)
 {
   const int user_data_size = sizeof(params_t);
-
-  struct spa_dict *main_loop_props =
-    { 0, };
-
-  settings->pipewire.main_loop = pw_thread_loop_new ("loop-name",
-						     main_loop_props);
-  if (settings->pipewire.main_loop == NULL)
-    {
-      fprintf (stderr,
-	       "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
-      return -1;
-    }
-
-//  spa_zero(settings->pipewire.main_loop_listener);
-  pw_thread_loop_add_listener (settings->pipewire.main_loop,
-			       &settings->pipewire.main_loop_listener,
-			       &main_loop_events, settings);
 
   struct pw_properties *context_props = NULL;
 
   settings->pipewire.context = pw_context_new (
-      pw_thread_loop_get_loop (settings->pipewire.main_loop), context_props,
-      user_data_size);
+      pw_thread_loop_get_loop (main_loop), context_props, user_data_size);
 
   if (settings->pipewire.context == NULL)
     {
@@ -746,12 +728,27 @@ init_pipewire (void)
 {
   pw_init (NULL, NULL);
 
+  struct spa_dict *main_loop_props =
+    { 0, };
+
+  main_loop = pw_thread_loop_new ("loop-name", main_loop_props);
+  if (main_loop == NULL)
+    {
+      fprintf (stderr,
+	       "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
+      return -1;
+    }
+
+//  spa_zero(settings->pipewire.main_loop_listener);
+  pw_thread_loop_add_listener (main_loop, &main_loop_listener,
+			       &main_loop_events, NULL);
+
   for (int i = 0; i < device_count; i++)
     {
       if (debug)
 	fprintf (stderr, "PipeWire I/O::synch_start, device: %d.\n", i);
 
-      if (init_pipewire_context (device[i]) < 0)
+      if (init_pipewire_context (device[i], main_loop) < 0)
 	{
 	  fprintf (
 	      stderr,
@@ -808,10 +805,11 @@ bfio_preinit (int *version_major, int *version_minor, int
 	      int *uses_sample_clock, int *callback_sched_policy,
 	      struct sched_param *callback_sched, int _debug)
 {
-  debug = _debug;
+  debug = true;
 
-  memset (callback_sched, 0, sizeof(*callback_sched));
+//  memset (callback_sched, 0, sizeof(*callback_sched));
   *callback_sched_policy = SCHED_FIFO;
+  callback_sched->sched_priority = 3;
 
   if (debug)
     fprintf (stderr, "PipeWire I/O::preinit, device: %d, io: %d\n",
@@ -905,7 +903,7 @@ bfio_init (
   _bf_process_callback = process_callback;
   settings->bf_callback_state = callback_state;
 
-  *device_period_size = period_size;
+  *device_period_size = 1024;
   *isinterleaved = false;
 
   enum spa_audio_format audio_format = detect_pw_sample_format (sample_format);
@@ -948,14 +946,10 @@ bfio_synch_start ()
       return -1;
     }
 
-  for (int i = 0; i < device_count; i++)
+  if (pw_thread_loop_start (main_loop) < 0)
     {
-      if (pw_thread_loop_start (device[i]->pipewire.main_loop) < 0)
-	{
-	  fprintf (stderr, "PipeWire I/O: can run main-loop for device %d.\n",
-		   i);
-	  return -1;
-	}
+      fprintf (stderr, "PipeWire I/O: can run main-loop.\n");
+      return -1;
     }
 
   return 0;
@@ -967,11 +961,11 @@ bfio_synch_stop ()
   if (debug)
     fprintf (stderr, "PipeWire I/O::synch_stop.\n");
 
+  pw_thread_loop_stop (main_loop);
+  pw_thread_loop_destroy (main_loop);
+
   for (int i = 0; i < device_count; i++)
     {
-      pw_thread_loop_stop (device[i]->pipewire.main_loop);
-      pw_thread_loop_destroy (device[i]->pipewire.main_loop);
-
       free (device[i]);
     }
 }
