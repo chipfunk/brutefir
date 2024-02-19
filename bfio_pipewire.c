@@ -58,8 +58,6 @@ typedef struct
   void *port_data[BF_MAXCHANNELS];
   struct spa_hook port_listener[BF_MAXCHANNELS];
 
-  enum pw_direction direction;
-
 } pipewire_t;
 
 typedef struct
@@ -315,21 +313,18 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
   double null_buffer[n_samples] =
     { };		// endian-ness doesn't matter
 
-  const int io = settings->pipewire.direction == PW_DIRECTION_INPUT ? 0 : 1;
-
   for (int channel = 0; channel < settings->open_channels; channel++)
     {
-      bf_buffers[io][channel] = pw_filter_get_dsp_buffer (
+      bf_buffers[settings->io][channel] = pw_filter_get_dsp_buffer (
 	  settings->pipewire.port_data[channel], n_samples);
 
-      if (bf_buffers[io][channel] == NULL)
+      if (bf_buffers[settings->io][channel] == NULL)
 	{
-	  bf_buffers[io][channel] = &null_buffer;
+	  bf_buffers[settings->io][channel] = &null_buffer;
 	}
     }
 
-  bf_buffers[settings->pipewire.direction == PW_DIRECTION_INPUT ? 1 : 0] =
-  NULL;
+//  bf_buffers[settings->io == BF_IN ? 0 : 1] = NULL;
 
   void *in_state[settings->open_channels];
   in_state[0] = settings->bf_callback_state;
@@ -339,13 +334,12 @@ _pw_filter_process_cb (void *data, struct spa_io_position *position)
 
   void **callback_states[2];
   callback_states[BF_IN] =
-      settings->pipewire.direction == PW_DIRECTION_INPUT ? in_state : NULL;
+      settings->io == BF_IN ? in_state : NULL;
   callback_states[BF_OUT] =
-      settings->pipewire.direction == PW_DIRECTION_OUTPUT ? out_state : NULL;
+      settings->io == BF_OUT ? out_state : NULL;
 
   int state_count[2] =
-    { settings->pipewire.direction == PW_DIRECTION_INPUT ? 1 : 0,
-	settings->pipewire.direction == PW_DIRECTION_OUTPUT ? 1 : 0 };
+    { settings->io == BF_IN ? 1 : 0, settings->io == BF_OUT ? 1 : 0 };
 
   int result = _bf_process_callback (callback_states, state_count, bf_buffers,
 				     n_samples,
@@ -728,22 +722,25 @@ init_pipewire_context (params_t *settings, struct pw_thread_loop *main_loop)
 static int
 init_pipewire (void)
 {
-  pw_init (NULL, NULL);
-
-  struct spa_dict *main_loop_props =
-    { 0, };
-
-  main_loop = pw_thread_loop_new ("loop-name", main_loop_props);
-  if (main_loop == NULL)
+  if(main_loop == NULL)
     {
-      fprintf (stderr,
-	       "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
-      return -1;
-    }
+      pw_init (NULL, NULL);
 
-//  spa_zero(settings->pipewire.main_loop_listener);
-  pw_thread_loop_add_listener (main_loop, &main_loop_listener,
-			       &main_loop_events, NULL);
+      struct spa_dict *main_loop_props =
+	{ 0, };
+
+      main_loop = pw_thread_loop_new ("loop-name", main_loop_props);
+      if (main_loop == NULL)
+	{
+	  fprintf (stderr,
+		   "PipeWire I/O::init can not setup PipeWire-main-loop.\n");
+	  return -1;
+	}
+
+      //  spa_zero(settings->pipewire.main_loop_listener);
+        pw_thread_loop_add_listener (main_loop, &main_loop_listener,
+      			       &main_loop_events, NULL);
+    }
 
   for (int i = 0; i < device_count; i++)
     {
@@ -847,8 +844,6 @@ bfio_preinit (int *version_major, int *version_minor, int
     }
 
   params->io = io;
-  params->pipewire.direction =
-      io == BF_IN ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT;
   params->device_no = device_count;
   params->sample_rate = sample_rate;
   params->open_channels = open_channels;
