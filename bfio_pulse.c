@@ -206,12 +206,10 @@ parse_config_options(struct settings_t *settings,
   }
 
   if (settings->app_name == NULL) {
-    fprintf(stderr, "Pulse I/O: Parse error: application-name expected.\n");
-    return -1;
+    settings->app_name = "BruteFIR";
   }
   if (settings->stream_name == NULL) {
-    fprintf(stderr, "Pulse I/O: Parse error: stream-name expected.\n");
-    return -1;
+    settings->stream_name = "BruteFIR stream";
   }
 
   return 0;
