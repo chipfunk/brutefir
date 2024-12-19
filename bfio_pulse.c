@@ -46,21 +46,10 @@ static struct settings_t *my_params[2][BF_MAXFILTERS];
 
 static int debug = true;
 
-unsigned int bf_device_count = 0;
-unsigned int bf_device_channels_in = 0;
-unsigned int bf_device_out_channels = 0;
-
 struct device_count_t {
   unsigned int in;
   unsigned int out;
-};
-
-struct device_count_t device_count = {0, 0};
-
-struct channel_count_t {
-  unsigned int in;
-  unsigned int out;
-} bf_channel_count = {0, 0};
+} device_count = {0, 0};
 
 /**
  * Create a pipe to trap BruteFIR into thinking there is data-available.
@@ -310,15 +299,11 @@ void *bfio_preinit(int *version_major, int *version_minor,
 
   printf("pulse::preinit: %d, %d, %d\n", io, sample_rate, open_channels);
 
-  bf_device_count++;
-
   unsigned int device = 0;
   if (io == BF_IN) {
     device = device_count.in++;
-    bf_channel_count.in += open_channels;
   } else if (io == BF_OUT) {
     device = device_count.out++;
-    bf_channel_count.out += open_channels;
   } else {
     fprintf(stderr, "Pulse I/O: Unknown I/O direction, %d.\n", io);
     return NULL;
@@ -346,9 +331,8 @@ int bfio_init(void *params, int io, int sample_format, int sample_rate,
                                       int callback_state_count[2],
                                       void **buffers[2], int frame_count,
                                       int event)) {
-  printf("pulse::init: %d, %d, %d, %d, %d, %d\n", io, sample_rate,
-         open_channels, period_size, bf_device_channels_in,
-         bf_device_out_channels);
+  printf("pulse::init: %d, %d, %d, %d\n", io, sample_rate,
+         open_channels, period_size);
 
   struct settings_t *settings = params;
 
