@@ -62,6 +62,9 @@ BFIO_JACK_OBJS	= bfio_jack.fpic.o emalloc.fpic.o inout.fpic.o
 BFIO_PIPEWIRE_LIBS	= -lpipewire-0.3
 BFIO_PIPEWIRE_OBJS	= bfio_pipewire.fpic.o emalloc.fpic.o inout.fpic.o
 
+BFIO_EXAMPLE_CALLBACK_OBJS	= bfio_example_callback.fpic.o emalloc.fpic.o inout.fpic.o
+BFIO_EXAMPLE_READ_WRITE_OBJS	= bfio_example_read_write.fpic.o emalloc.fpic.o inout.fpic.o
+
 BFLOGIC_CLI_OBJS = bflogic_cli.fpic.o inout.fpic.o
 BFLOGIC_EQ_OBJS	= bflogic_eq.fpic.o emalloc.fpic.o shmalloc.fpic.o
 
@@ -103,6 +106,8 @@ endif
 endif
 
 LIB_TARGETS	+= pipewire.bfio
+LIB_TARGETS	+= example_callback.bfio
+LIB_TARGETS	+= example_read_write.bfio
 
 # FreeBSD
 ifeq ($(UNAME),FreeBSD)
@@ -150,6 +155,14 @@ jack.bfio: $(BFIO_JACK_OBJS)
 
 pipewire.bfio: $(BFIO_PIPEWIRE_OBJS)
 	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_PIPEWIRE_OBJS) $(BFIO_PIPEWIRE_LIBS) -lc
+	$(CHMOD) $(CHMOD_REMOVEX) $@
+
+example_callback.bfio: $(BFIO_EXAMPLE_CALLBACK_OBJS)
+	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_EXAMPLE_CALLBACK_OBJS) -lc
+	$(CHMOD) $(CHMOD_REMOVEX) $@
+
+example_read_write.bfio: $(BFIO_EXAMPLE_READ_WRITE_OBJS)
+	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_EXAMPLE_READ_WRITE_OBJS) -lc
 	$(CHMOD) $(CHMOD_REMOVEX) $@
 
 file.bfio: $(BFIO_FILE_OBJS)
