@@ -62,11 +62,11 @@ BFIO_JACK_OBJS	= bfio_jack.fpic.o emalloc.fpic.o inout.fpic.o
 BFIO_PIPEWIRE_LIBS	= -lpipewire-0.3
 BFIO_PIPEWIRE_OBJS	= bfio_pipewire.fpic.o emalloc.fpic.o inout.fpic.o
 
-BFIO_EXAMPLE_CALLBACK_OBJS	= bfio_example_callback.fpic.o emalloc.fpic.o inout.fpic.o
-BFIO_EXAMPLE_READ_WRITE_OBJS	= bfio_example_read_write.fpic.o emalloc.fpic.o inout.fpic.o
-
 BFIO_PULSE_LIBS	= -lpulse -lpulse-simple
 BFIO_PULSE_OBJS	= bfio_pulse.fpic.o emalloc.fpic.o inout.fpic.o
+
+BFIO_EXAMPLE_CALLBACK_OBJS	= bfio_example_callback.fpic.o emalloc.fpic.o inout.fpic.o
+BFIO_EXAMPLE_READ_WRITE_OBJS	= bfio_example_read_write.fpic.o emalloc.fpic.o inout.fpic.o
 
 BFLOGIC_CLI_OBJS = bflogic_cli.fpic.o inout.fpic.o
 BFLOGIC_EQ_OBJS	= bflogic_eq.fpic.o emalloc.fpic.o shmalloc.fpic.o
@@ -103,14 +103,14 @@ LDMULTIPLEDEFS	= -Xlinker --allow-multiple-definition
 # assume that we have oss and jack, alsa being linux-only
 ifeq ($(UNAME),Linux)
 LIB_TARGETS	+= alsa.bfio
-LIB_TARGETS	+= oss.bfio
-LIB_TARGETS	+= jack.bfio
+#LIB_TARGETS	+= oss.bfio
+#LIB_TARGETS	+= jack.bfio
 LIB_TARGETS	+= pulse.bfio
-endif
-
 LIB_TARGETS	+= pipewire.bfio
 LIB_TARGETS	+= example_callback.bfio
 LIB_TARGETS	+= example_read_write.bfio
+endif
+endif
 
 # FreeBSD
 ifeq ($(UNAME),FreeBSD)
@@ -192,4 +192,4 @@ install: $(BIN_TARGETS) $(LIB_TARGETS)
 clean:
 	rm -f *.core core bfconf_lexical.c $(BRUTEFIR_OBJS) $(BFIO_FILE_OBJS)  \
 $(BFLOGIC_CLI_OBJS) $(BFLOGIC_EQ_OBJS) $(BFIO_ALSA_OBJS) $(BFIO_OSS_OBJS) \
-$(BFIO_JACK_OBJS) $(BFIO_PIPEWIRE_OBJS) ${BFIO_PULSE_OBJS} $(TARGETS)
+$(BFIO_JACK_OBJS) $(BFIO_PIPEWIRE_OBJS) ${BFIO_PULSE_OBJS} ${BFIO_EXAMPLE_CALLBACK_OBJS} ${BFIO_EXAMPLE_READ_WRITE_OBJS} $(TARGETS)
