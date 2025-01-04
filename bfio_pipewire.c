@@ -161,8 +161,6 @@ detect_pw_sample_format(const int bf_sample_format) {
     return SPA_AUDIO_FORMAT_F32_LE;
   case BF_SAMPLE_FORMAT_FLOAT_BE:
     return SPA_AUDIO_FORMAT_F32_BE;
-  default:
-    // noop
   }
 
   return SPA_AUDIO_FORMAT_UNKNOWN;
@@ -204,9 +202,9 @@ parse_config_options(struct params_t *settings,
   }
 
   if (settings->app_name == NULL)
-    settings->app_name = "BruteFIR";
+    settings->app_name = (char *)"BruteFIR";
   if (settings->stream_name == NULL)
-    settings->stream_name = "BruteFIR stream";
+    settings->stream_name = (char *)"BruteFIR stream";
 
   return 0;
 }
