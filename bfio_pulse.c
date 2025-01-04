@@ -271,7 +271,7 @@ detect_pa_sample_format (const int bf_sample_format)
     case BF_SAMPLE_FORMAT_AUTO:
 #ifdef LITTLE_ENDIAN
       return PA_SAMPLE_S32LE;
-#else if BIG_ENDIAN
+#elif BIG_ENDIAN
 			return PA_SAMPLE_S32BE;
 #endif
     case BF_SAMPLE_FORMAT_S8:
