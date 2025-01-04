@@ -1,4 +1,9 @@
-.cproject
-.project
-.settings/
+*.o
+*.bfio
+*.bflogic
+bfconf_lexical.c
+brutefir
 
+.project
+.cproject
+.settings

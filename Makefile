@@ -65,6 +65,9 @@ BFIO_PIPEWIRE_OBJS	= bfio_pipewire.fpic.o emalloc.fpic.o inout.fpic.o
 BFIO_EXAMPLE_CALLBACK_OBJS	= bfio_example_callback.fpic.o emalloc.fpic.o inout.fpic.o
 BFIO_EXAMPLE_READ_WRITE_OBJS	= bfio_example_read_write.fpic.o emalloc.fpic.o inout.fpic.o
 
+BFIO_PULSE_LIBS	= -lpulse -lpulse-simple
+BFIO_PULSE_OBJS	= bfio_pulse.fpic.o emalloc.fpic.o inout.fpic.o
+
 BFLOGIC_CLI_OBJS = bflogic_cli.fpic.o inout.fpic.o
 BFLOGIC_EQ_OBJS	= bflogic_eq.fpic.o emalloc.fpic.o shmalloc.fpic.o
 
@@ -100,9 +103,9 @@ LDMULTIPLEDEFS	= -Xlinker --allow-multiple-definition
 # assume that we have oss and jack, alsa being linux-only
 ifeq ($(UNAME),Linux)
 LIB_TARGETS	+= alsa.bfio
-endif
-#LIB_TARGETS	+= oss.bfio
-#LIB_TARGETS	+= jack.bfio
+LIB_TARGETS	+= oss.bfio
+LIB_TARGETS	+= jack.bfio
+LIB_TARGETS	+= pulse.bfio
 endif
 
 LIB_TARGETS	+= pipewire.bfio
@@ -169,6 +172,10 @@ file.bfio: $(BFIO_FILE_OBJS)
 	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_FILE_OBJS) -lc
 	$(CHMOD) $(CHMOD_REMOVEX) $@
 
+pulse.bfio: $(BFIO_PULSE_OBJS)
+	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFIO_PULSE_OBJS) $(BFIO_PULSE_LIBS) -lc
+	$(CHMOD) $(CHMOD_REMOVEX) $@
+
 cli.bflogic: $(BFLOGIC_CLI_OBJS)
 	$(LD) $(LD_SHARED) $(LDFLAGS) $(CC_FPIC) $(LIBPATHS) -o $@ $(BFLOGIC_CLI_OBJS) -lc
 	$(CHMOD) $(CHMOD_REMOVEX) $@
@@ -185,4 +192,4 @@ install: $(BIN_TARGETS) $(LIB_TARGETS)
 clean:
 	rm -f *.core core bfconf_lexical.c $(BRUTEFIR_OBJS) $(BFIO_FILE_OBJS)  \
 $(BFLOGIC_CLI_OBJS) $(BFLOGIC_EQ_OBJS) $(BFIO_ALSA_OBJS) $(BFIO_OSS_OBJS) \
-$(BFIO_JACK_OBJS) $(BFIO_PIPEWIRE_OBJS) $(TARGETS)
+$(BFIO_JACK_OBJS) $(BFIO_PIPEWIRE_OBJS) ${BFIO_PULSE_OBJS} $(TARGETS)
