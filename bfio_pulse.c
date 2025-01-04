@@ -195,10 +195,10 @@ parse_config_options(struct settings_t *settings,
   }
 
   if (settings->app_name == NULL) {
-    settings->app_name = "BruteFIR";
+    settings->app_name = (char *)"BruteFIR";
   }
   if (settings->stream_name == NULL) {
-    settings->stream_name = "BruteFIR stream";
+    settings->stream_name = (char *)"BruteFIR stream";
   }
 
   return 0;
@@ -217,8 +217,7 @@ detect_pa_sample_format(const int bf_sample_format) {
   case BF_SAMPLE_FORMAT_AUTO:
 #ifdef LITTLE_ENDIAN
     return PA_SAMPLE_S32LE;
-#endif
-#ifdef BIG_ENDIAN
+#elif BIG_ENDIAN
     return PA_SAMPLE_S32BE;
 #endif
   case BF_SAMPLE_FORMAT_S8:
@@ -243,8 +242,6 @@ detect_pa_sample_format(const int bf_sample_format) {
     return PA_SAMPLE_FLOAT32LE;
   case BF_SAMPLE_FORMAT_FLOAT_BE:
     return PA_SAMPLE_FLOAT32BE;
-  default:
-    // noop
   }
 
   return PA_SAMPLE_INVALID;
@@ -416,7 +413,7 @@ int bfio_start(const int io) {
     }
 
     settings->pa_handle = pa_handle;
-    fprintf(stderr, "Pulse I/O opened handle %d\n", pa_handle);
+    fprintf(stderr, "Pulse I/O opened handle %p\n", pa_handle);
   }
 
   return 0;
